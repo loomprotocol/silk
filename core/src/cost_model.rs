@@ -7,21 +7,33 @@
 //! is transaction's "execution cost"
 //! The main function is `calculate_cost` which returns a TransactionCost struct.
 //!
-use crate::execute_cost_table::ExecuteCostTable;
 use log::*;
-use solana_sdk::{message::Message, pubkey::Pubkey, transaction::Transaction};
+use solana_sdk::{
+    bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable, feature, incinerator,
+    message::Message, native_loader, pubkey::Pubkey, secp256k1_program, system_program,
+    transaction::Transaction,
+};
 use std::collections::HashMap;
 
-// Guestimated from mainnet-beta data, sigver averages 1us, read averages 7us and write avergae 25us
-const SIGNED_WRITABLE_ACCOUNT_ACCESS_COST: u64 = 1 + 25;
-const SIGNED_READONLY_ACCOUNT_ACCESS_COST: u64 = 1 + 7;
-const NON_SIGNED_WRITABLE_ACCOUNT_ACCESS_COST: u64 = 25;
-const NON_SIGNED_READONLY_ACCOUNT_ACCESS_COST: u64 = 7;
-
-// Sampled from mainnet-beta, the instruction execution timings stats are (in us):
-// min=194, max=62164, avg=8214.49, med=2243
-pub const ACCOUNT_MAX_COST: u64 = 100_000_000;
-pub const BLOCK_MAX_COST: u64 = 2_500_000_000;
+// from mainnet-beta data, taking `vote program` as 1 COST_UNIT to load and execute
+// amount all type programs, the costs are:
+// min: 0.9 COST_UNIT
+// max: 110 COST UNIT
+// Median: 12 COST_UNIT
+// Average: 19 COST_UNIT
+const COST_UNIT: u32 = 1;
+const DEFAULT_PROGRAM_COST: u32 = COST_UNIT * 100;
+// re-adjust these numbers if needed
+const SIGNED_WRITABLE_ACCOUNT_ACCESS_COST: u32 = COST_UNIT * 10;
+const SIGNED_READONLY_ACCOUNT_ACCESS_COST: u32 = COST_UNIT * 2;
+const NON_SIGNED_WRITABLE_ACCOUNT_ACCESS_COST: u32 = COST_UNIT * 5;
+const NON_SIGNED_READONLY_ACCOUNT_ACCESS_COST: u32 = COST_UNIT;
+// running 'ledger-tool compute-cost' over mainnet ledger, the largest block cost
+// is 575_687, and the largest chain cost (eg account cost) is 559_000
+// Configuring cost model to have larger block limit and smaller account limit
+// to encourage packing parallelizable transactions in block.
+pub const ACCOUNT_MAX_COST: u32 = COST_UNIT * 10_000;
+pub const BLOCK_MAX_COST: u32 = COST_UNIT * 10_000_000;
 
 // cost of transaction is made of account_access_cost and instruction execution_cost
 // where
@@ -32,15 +44,52 @@ pub const BLOCK_MAX_COST: u64 = 2_500_000_000;
 #[derive(Default, Debug)]
 pub struct TransactionCost {
     pub writable_accounts: Vec<Pubkey>,
-    pub account_access_cost: u64,
-    pub execution_cost: u64,
+    pub account_access_cost: u32,
+    pub execution_cost: u32,
+}
+
+// instruction execution code table is initialized with default values, and
+// updated with realtime information (by Replay)
+#[derive(Debug)]
+struct InstructionExecutionCostTable {
+    pub table: HashMap<Pubkey, u32>,
+}
+
+macro_rules! costmetrics {
+    ($( $key: expr => $val: expr ),*) => {{
+        let mut hashmap: HashMap< Pubkey, u32 > = HashMap::new();
+        $( hashmap.insert( $key, $val); )*
+        hashmap
+    }}
+}
+
+impl InstructionExecutionCostTable {
+    // build cost table with default value
+    pub fn new() -> Self {
+        Self {
+            table: costmetrics![
+                solana_config_program::id()        => COST_UNIT,
+                feature::id()                      => COST_UNIT * 2,
+                incinerator::id()                  => COST_UNIT * 2,
+                native_loader::id()                => COST_UNIT * 2,
+                solana_stake_program::id()         => COST_UNIT * 2,
+                solana_stake_program::config::id() => COST_UNIT,
+                solana_vote_program::id()          => COST_UNIT,
+                secp256k1_program::id()            => COST_UNIT,
+                system_program::id()               => COST_UNIT * 8,
+                bpf_loader::id()                   => COST_UNIT * 500,
+                bpf_loader_deprecated::id()        => COST_UNIT * 500,
+                bpf_loader_upgradeable::id()       => COST_UNIT * 500
+            ],
+        }
+    }
 }
 
 #[derive(Debug)]
 pub struct CostModel {
-    account_cost_limit: u64,
-    block_cost_limit: u64,
-    instruction_execution_cost_table: ExecuteCostTable,
+    account_cost_limit: u32,
+    block_cost_limit: u32,
+    instruction_execution_cost_table: InstructionExecutionCostTable,
 }
 
 impl Default for CostModel {
@@ -50,19 +99,19 @@ impl Default for CostModel {
 }
 
 impl CostModel {
-    pub fn new(chain_max: u64, block_max: u64) -> Self {
+    pub fn new(chain_max: u32, block_max: u32) -> Self {
         Self {
             account_cost_limit: chain_max,
             block_cost_limit: block_max,
-            instruction_execution_cost_table: ExecuteCostTable::default(),
+            instruction_execution_cost_table: InstructionExecutionCostTable::new(),
         }
     }
 
-    pub fn get_account_cost_limit(&self) -> u64 {
+    pub fn get_account_cost_limit(&self) -> u32 {
         self.account_cost_limit
     }
 
-    pub fn get_block_cost_limit(&self) -> u64 {
+    pub fn get_block_cost_limit(&self) -> u32 {
         self.block_cost_limit
     }
 
@@ -91,39 +140,40 @@ impl CostModel {
     }
 
     // To update or insert instruction cost to table.
+    // When updating, uses the average of new and old values to smooth out outliers
     pub fn upsert_instruction_cost(
         &mut self,
         program_key: &Pubkey,
-        cost: &u64,
-    ) -> Result<u64, &'static str> {
-        self.instruction_execution_cost_table
-            .upsert(program_key, cost);
-        match self.instruction_execution_cost_table.get_cost(program_key) {
-            Some(cost) => Ok(*cost),
-            None => Err("failed to upsert to ExecuteCostTable"),
-        }
+        cost: &u32,
+    ) -> Result<u32, &'static str> {
+        let instruction_cost = self
+            .instruction_execution_cost_table
+            .table
+            .entry(*program_key)
+            .or_insert(*cost);
+        *instruction_cost = (*instruction_cost + *cost) / 2;
+        Ok(*instruction_cost)
     }
 
-    pub fn get_instruction_cost_table(&self) -> &HashMap<Pubkey, u64> {
-        self.instruction_execution_cost_table.get_cost_table()
-    }
-
-    fn find_instruction_cost(&self, program_key: &Pubkey) -> u64 {
-        match self.instruction_execution_cost_table.get_cost(&program_key) {
+    fn find_instruction_cost(&self, program_key: &Pubkey) -> u32 {
+        match self
+            .instruction_execution_cost_table
+            .table
+            .get(&program_key)
+        {
             Some(cost) => *cost,
             None => {
-                let default_value = self.instruction_execution_cost_table.get_mode();
                 debug!(
-                    "Program key {:?} does not have assigned cost, using mode {}",
-                    program_key, default_value
+                    "Program key {:?} does not have assigned cost, using default {}",
+                    program_key, DEFAULT_PROGRAM_COST
                 );
-                default_value
+                DEFAULT_PROGRAM_COST
             }
         }
     }
 
-    fn find_transaction_cost(&self, transaction: &Transaction) -> u64 {
-        let mut cost: u64 = 0;
+    fn find_transaction_cost(&self, transaction: &Transaction) -> u32 {
+        let mut cost: u32 = 0;
 
         for instruction in &transaction.message().instructions {
             let program_id =
@@ -144,12 +194,12 @@ impl CostModel {
         signed_readonly_accounts: &[Pubkey],
         non_signed_writable_accounts: &[Pubkey],
         non_signed_readonly_accounts: &[Pubkey],
-    ) -> u64 {
+    ) -> u32 {
         let mut cost = 0;
-        cost += signed_writable_accounts.len() as u64 * SIGNED_WRITABLE_ACCOUNT_ACCESS_COST;
-        cost += signed_readonly_accounts.len() as u64 * SIGNED_READONLY_ACCOUNT_ACCESS_COST;
-        cost += non_signed_writable_accounts.len() as u64 * NON_SIGNED_WRITABLE_ACCOUNT_ACCESS_COST;
-        cost += non_signed_readonly_accounts.len() as u64 * NON_SIGNED_READONLY_ACCOUNT_ACCESS_COST;
+        cost += signed_writable_accounts.len() as u32 * SIGNED_WRITABLE_ACCOUNT_ACCESS_COST;
+        cost += signed_readonly_accounts.len() as u32 * SIGNED_READONLY_ACCOUNT_ACCESS_COST;
+        cost += non_signed_writable_accounts.len() as u32 * NON_SIGNED_WRITABLE_ACCOUNT_ACCESS_COST;
+        cost += non_signed_readonly_accounts.len() as u32 * NON_SIGNED_READONLY_ACCOUNT_ACCESS_COST;
         cost
     }
 
@@ -192,13 +242,12 @@ mod tests {
         genesis_utils::{create_genesis_config, GenesisConfigInfo},
     };
     use solana_sdk::{
-        bpf_loader,
         hash::Hash,
         instruction::CompiledInstruction,
         message::Message,
         signature::{Keypair, Signer},
         system_instruction::{self},
-        system_program, system_transaction,
+        system_transaction,
     };
     use std::{
         str::FromStr,
@@ -220,21 +269,23 @@ mod tests {
 
     #[test]
     fn test_cost_model_instruction_cost() {
-        let mut testee = CostModel::default();
+        let testee = CostModel::default();
 
-        let known_key = Pubkey::from_str("known11111111111111111111111111111111111111").unwrap();
-        testee.upsert_instruction_cost(&known_key, &100).unwrap();
         // find cost for known programs
-        assert_eq!(100, testee.find_instruction_cost(&known_key));
-
-        testee
-            .upsert_instruction_cost(&bpf_loader::id(), &1999)
-            .unwrap();
-        assert_eq!(1999, testee.find_instruction_cost(&bpf_loader::id()));
+        assert_eq!(
+            COST_UNIT,
+            testee.find_instruction_cost(
+                &Pubkey::from_str("Vote111111111111111111111111111111111111111").unwrap()
+            )
+        );
+        assert_eq!(
+            COST_UNIT * 500,
+            testee.find_instruction_cost(&bpf_loader::id())
+        );
 
         // unknown program is assigned with default cost
         assert_eq!(
-            testee.instruction_execution_cost_table.get_mode(),
+            DEFAULT_PROGRAM_COST,
             testee.find_instruction_cost(
                 &Pubkey::from_str("unknown111111111111111111111111111111111111").unwrap()
             )
@@ -254,12 +305,9 @@ mod tests {
         );
 
         // expected cost for one system transfer instructions
-        let expected_cost = 8;
+        let expected_cost = COST_UNIT * 8;
 
-        let mut testee = CostModel::default();
-        testee
-            .upsert_instruction_cost(&system_program::id(), &expected_cost)
-            .unwrap();
+        let testee = CostModel::default();
         assert_eq!(
             expected_cost,
             testee.find_transaction_cost(&simple_transaction)
@@ -279,13 +327,9 @@ mod tests {
         debug!("many transfer transaction {:?}", tx);
 
         // expected cost for two system transfer instructions
-        let program_cost = 8;
-        let expected_cost = program_cost * 2;
+        let expected_cost = COST_UNIT * 8 * 2;
 
-        let mut testee = CostModel::default();
-        testee
-            .upsert_instruction_cost(&system_program::id(), &program_cost)
-            .unwrap();
+        let testee = CostModel::default();
         assert_eq!(expected_cost, testee.find_transaction_cost(&tx));
     }
 
@@ -311,12 +355,11 @@ mod tests {
         );
         debug!("many random transaction {:?}", tx);
 
-        let testee = CostModel::default();
-        let result = testee.find_transaction_cost(&tx);
-
         // expected cost for two random/unknown program is
-        let expected_cost = testee.instruction_execution_cost_table.get_mode() * 2;
-        assert_eq!(expected_cost, result);
+        let expected_cost = DEFAULT_PROGRAM_COST * 2;
+
+        let testee = CostModel::default();
+        assert_eq!(expected_cost, testee.find_transaction_cost(&tx));
     }
 
     #[test]
@@ -368,7 +411,7 @@ mod tests {
         let mut cost_model = CostModel::default();
         // Using default cost for unknown instruction
         assert_eq!(
-            cost_model.instruction_execution_cost_table.get_mode(),
+            DEFAULT_PROGRAM_COST,
             cost_model.find_instruction_cost(&key1)
         );
 
@@ -388,12 +431,9 @@ mod tests {
         let expected_account_cost = SIGNED_WRITABLE_ACCOUNT_ACCESS_COST
             + NON_SIGNED_WRITABLE_ACCOUNT_ACCESS_COST
             + NON_SIGNED_READONLY_ACCOUNT_ACCESS_COST;
-        let expected_execution_cost = 8;
+        let expected_execution_cost = COST_UNIT * 8;
 
-        let mut cost_model = CostModel::default();
-        cost_model
-            .upsert_instruction_cost(&system_program::id(), &expected_execution_cost)
-            .unwrap();
+        let cost_model = CostModel::default();
         let tx_cost = cost_model.calculate_cost(&tx);
         assert_eq!(expected_account_cost, tx_cost.account_access_cost);
         assert_eq!(expected_execution_cost, tx_cost.execution_cost);
@@ -425,6 +465,7 @@ mod tests {
         let expected_account_cost = SIGNED_WRITABLE_ACCOUNT_ACCESS_COST
             + NON_SIGNED_WRITABLE_ACCOUNT_ACCESS_COST
             + NON_SIGNED_READONLY_ACCOUNT_ACCESS_COST;
+        let expected_execution_cost = COST_UNIT * 8;
 
         let cost_model = Arc::new(CostModel::default());
 
@@ -442,10 +483,7 @@ mod tests {
                     let tx_cost = cost_model.calculate_cost(&simple_transaction);
                     assert_eq!(2, tx_cost.writable_accounts.len());
                     assert_eq!(expected_account_cost, tx_cost.account_access_cost);
-                    assert_eq!(
-                        cost_model.instruction_execution_cost_table.get_mode(),
-                        tx_cost.execution_cost
-                    );
+                    assert_eq!(expected_execution_cost, tx_cost.execution_cost);
                 })
             })
             .collect();
@@ -482,6 +520,7 @@ mod tests {
         let cost1 = 100;
         let cost2 = 200;
         // execution cost can be either 2 * Default (before write) or cost1+cost2 (after write)
+        let expected_execution_cost = Arc::new(vec![cost1 + cost2, DEFAULT_PROGRAM_COST * 2]);
 
         let cost_model: Arc<RwLock<CostModel>> = Arc::new(RwLock::new(CostModel::default()));
 
@@ -489,6 +528,7 @@ mod tests {
             .map(|i| {
                 let cost_model = cost_model.clone();
                 let tx = tx.clone();
+                let expected_execution_cost = expected_execution_cost.clone();
 
                 if i == 5 {
                     thread::spawn(move || {
@@ -501,6 +541,7 @@ mod tests {
                         let tx_cost = cost_model.read().unwrap().calculate_cost(&tx);
                         assert_eq!(3, tx_cost.writable_accounts.len());
                         assert_eq!(expected_account_cost, tx_cost.account_access_cost);
+                        assert!(expected_execution_cost.contains(&tx_cost.execution_cost));
                     })
                 }
             })

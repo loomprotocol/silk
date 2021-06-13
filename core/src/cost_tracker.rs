@@ -7,15 +7,15 @@ use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
 pub struct CostTracker {
-    account_cost_limit: u64,
-    block_cost_limit: u64,
+    account_cost_limit: u32,
+    block_cost_limit: u32,
     current_bank_slot: Slot,
-    cost_by_writable_accounts: HashMap<Pubkey, u64>,
-    block_cost: u64,
+    cost_by_writable_accounts: HashMap<Pubkey, u32>,
+    block_cost: u32,
 }
 
 impl CostTracker {
-    pub fn new(chain_max: u64, package_max: u64) -> Self {
+    pub fn new(chain_max: u32, package_max: u32) -> Self {
         assert!(chain_max <= package_max);
         Self {
             account_cost_limit: chain_max,
@@ -34,7 +34,7 @@ impl CostTracker {
         }
     }
 
-    pub fn try_add(&mut self, transaction_cost: TransactionCost) -> Result<u64, &'static str> {
+    pub fn try_add(&mut self, transaction_cost: TransactionCost) -> Result<u32, &'static str> {
         let cost = transaction_cost.account_access_cost + transaction_cost.execution_cost;
         self.would_fit(&transaction_cost.writable_accounts, &cost)?;
 
@@ -42,7 +42,7 @@ impl CostTracker {
         Ok(self.block_cost)
     }
 
-    fn would_fit(&self, keys: &[Pubkey], cost: &u64) -> Result<(), &'static str> {
+    fn would_fit(&self, keys: &[Pubkey], cost: &u32) -> Result<(), &'static str> {
         // check against the total package cost
         if self.block_cost + cost > self.block_cost_limit {
             return Err("would exceed block cost limit");
@@ -70,7 +70,7 @@ impl CostTracker {
         Ok(())
     }
 
-    fn add_transaction(&mut self, keys: &[Pubkey], cost: &u64) {
+    fn add_transaction(&mut self, keys: &[Pubkey], cost: &u32) {
         for account_key in keys.iter() {
             *self
                 .cost_by_writable_accounts
@@ -84,10 +84,10 @@ impl CostTracker {
 // CostStats can be collected by util, such as ledger_tool
 #[derive(Default, Debug)]
 pub struct CostStats {
-    pub total_cost: u64,
+    pub total_cost: u32,
     pub number_of_accounts: usize,
     pub costliest_account: Pubkey,
-    pub costliest_account_cost: u64,
+    pub costliest_account_cost: u32,
 }
 
 impl CostTracker {
@@ -140,7 +140,7 @@ mod tests {
     fn build_simple_transaction(
         mint_keypair: &Keypair,
         start_hash: &Hash,
-    ) -> (Transaction, Vec<Pubkey>, u64) {
+    ) -> (Transaction, Vec<Pubkey>, u32) {
         let keypair = Keypair::new();
         let simple_transaction =
             system_transaction::transfer(&mint_keypair, &keypair.pubkey(), 2, *start_hash);

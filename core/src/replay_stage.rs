@@ -13,7 +13,6 @@ use crate::{
     consensus::{
         ComputedBankState, Stake, SwitchForkDecision, Tower, VotedStakes, SWITCH_FORK_THRESHOLD,
     },
-    cost_model::CostModel,
     fork_choice::{ForkChoice, SelectVoteAndResetForkResult},
     heaviest_subtree_fork_choice::HeaviestSubtreeForkChoice,
     latest_validator_votes_for_frozen_banks::LatestValidatorVotesForFrozenBanks,
@@ -41,8 +40,8 @@ use solana_rpc::{
     rpc_subscriptions::RpcSubscriptions,
 };
 use solana_runtime::{
-    accounts_background_service::AbsRequestSender, bank::Bank, bank::ExecuteTimings,
-    bank_forks::BankForks, commitment::BlockCommitmentCache, vote_sender_types::ReplayVoteSender,
+    accounts_background_service::AbsRequestSender, bank::Bank, bank_forks::BankForks,
+    commitment::BlockCommitmentCache, vote_sender_types::ReplayVoteSender,
 };
 use solana_sdk::{
     clock::{Slot, MAX_PROCESSING_AGE, NUM_CONSECUTIVE_LEADER_SLOTS},
@@ -295,7 +294,6 @@ impl ReplayStage {
         gossip_duplicate_confirmed_slots_receiver: GossipDuplicateConfirmedSlotsReceiver,
         gossip_verified_vote_hash_receiver: GossipVerifiedVoteHashReceiver,
         cluster_slots_update_sender: ClusterSlotsUpdateSender,
-        cost_model: Arc<RwLock<CostModel>>,
     ) -> Self {
         let ReplayStageConfig {
             my_pubkey,
@@ -392,7 +390,6 @@ impl ReplayStage {
                         &mut unfrozen_gossip_verified_vote_hashes,
                         &mut latest_validator_votes_for_frozen_banks,
                         &cluster_slots_update_sender,
-                        &cost_model,
                     );
                     replay_active_banks_time.stop();
 
@@ -1655,7 +1652,6 @@ impl ReplayStage {
         unfrozen_gossip_verified_vote_hashes: &mut UnfrozenGossipVerifiedVoteHashes,
         latest_validator_votes_for_frozen_banks: &mut LatestValidatorVotesForFrozenBanks,
         cluster_slots_update_sender: &ClusterSlotsUpdateSender,
-        cost_model: &RwLock<CostModel>,
     ) -> bool {
         let mut did_complete_bank = false;
         let mut tx_count = 0;
@@ -1705,11 +1701,6 @@ impl ReplayStage {
                     transaction_status_sender,
                     replay_vote_sender,
                     verify_recyclers,
-                );
-                Self::update_cost_model(&cost_model, &bank_progress.replay_stats.execute_timings);
-                debug!(
-                    "after replayed into bank, updated cost model instruction cost table, current values: {:?}",
-                    cost_model.read().unwrap().get_instruction_cost_table()
                 );
                 match replay_result {
                     Ok(replay_tx_count) => tx_count += replay_tx_count,
@@ -1899,32 +1890,6 @@ impl ReplayStage {
             stats.is_recent = tower.is_recent(bank_slot);
         }
         new_stats
-    }
-
-    fn update_cost_model(cost_model: &RwLock<CostModel>, execute_timings: &ExecuteTimings) {
-        let mut cost_model_mutable = cost_model.write().unwrap();
-        for (program_id, stats) in &execute_timings.details.per_program_timings {
-            let cost = stats.0 / stats.1 as u64;
-            match cost_model_mutable.upsert_instruction_cost(&program_id, &cost) {
-                Ok(c) => {
-                    debug!(
-                        "after replayed into bank, instruction {:?} has averaged cost {}",
-                        program_id, c
-                    );
-                }
-                Err(err) => {
-                    debug!(
-                        "after replayed into bank, instruction {:?} failed to update cost, err: {}",
-                        program_id, err
-                    );
-                }
-            }
-        }
-        drop(cost_model_mutable);
-        debug!(
-           "after replayed into bank, updated cost model instruction cost table, current values: {:?}",
-           cost_model.read().unwrap().get_instruction_cost_table()
-       );
     }
 
     fn update_propagation_status(
@@ -4903,90 +4868,6 @@ mod tests {
             expired_bank.last_blockhash()
         );
         assert_eq!(tower.last_voted_slot().unwrap(), 1);
-    }
-
-    #[test]
-    fn test_update_cost_model_with_empty_execute_timings() {
-        let cost_model = Arc::new(RwLock::new(CostModel::default()));
-        let empty_execute_timings = ExecuteTimings::default();
-        ReplayStage::update_cost_model(&cost_model, &empty_execute_timings);
-
-        assert_eq!(
-            0,
-            cost_model
-                .read()
-                .unwrap()
-                .get_instruction_cost_table()
-                .len()
-        );
-    }
-
-    #[test]
-    fn test_update_cost_model_with_execute_timings() {
-        let cost_model = Arc::new(RwLock::new(CostModel::default()));
-        let mut execute_timings = ExecuteTimings::default();
-
-        let program_key_1 = Pubkey::new_unique();
-        let mut expected_cost: u64;
-
-        // add new program
-        {
-            let accumulated_us: u64 = 1000;
-            let count: u32 = 10;
-            expected_cost = accumulated_us / count as u64;
-
-            execute_timings
-                .details
-                .per_program_timings
-                .insert(program_key_1, (accumulated_us, count));
-            ReplayStage::update_cost_model(&cost_model, &execute_timings);
-            assert_eq!(
-                1,
-                cost_model
-                    .read()
-                    .unwrap()
-                    .get_instruction_cost_table()
-                    .len()
-            );
-            assert_eq!(
-                Some(&expected_cost),
-                cost_model
-                    .read()
-                    .unwrap()
-                    .get_instruction_cost_table()
-                    .get(&program_key_1)
-            );
-        }
-
-        // update program
-        {
-            let accumulated_us: u64 = 2000;
-            let count: u32 = 10;
-            // to expect new cost is Average(new_value, existing_value)
-            expected_cost = ((accumulated_us / count as u64) + expected_cost) / 2;
-
-            execute_timings
-                .details
-                .per_program_timings
-                .insert(program_key_1, (accumulated_us, count));
-            ReplayStage::update_cost_model(&cost_model, &execute_timings);
-            assert_eq!(
-                1,
-                cost_model
-                    .read()
-                    .unwrap()
-                    .get_instruction_cost_table()
-                    .len()
-            );
-            assert_eq!(
-                Some(&expected_cost),
-                cost_model
-                    .read()
-                    .unwrap()
-                    .get_instruction_cost_table()
-                    .get(&program_key_1)
-            );
-        }
     }
 
     fn run_compute_and_select_forks(
