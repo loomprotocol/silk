@@ -4537,6 +4537,7 @@ dependencies = [
  "solana-clap-utils",
  "solana-client",
  "solana-config-program",
+ "solana-faucet",
  "solana-frozen-abi 1.8.0",
  "solana-frozen-abi-macro 1.8.0",
  "solana-gossip",

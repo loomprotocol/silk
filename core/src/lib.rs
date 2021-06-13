@@ -18,8 +18,6 @@ pub mod cluster_slots_service;
 pub mod commitment_service;
 pub mod completed_data_sets_service;
 pub mod consensus;
-pub mod cost_model;
-pub mod cost_tracker;
 pub mod fetch_stage;
 pub mod fork_choice;
 pub mod gen_keys;
