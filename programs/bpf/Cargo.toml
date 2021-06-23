@@ -45,6 +45,7 @@ members = [
     "rust/128bit",
     "rust/128bit_dep",
     "rust/alloc",
+    "rust/bignumber",
     "rust/call_depth",
     "rust/caller_access",
     "rust/custom_heap",

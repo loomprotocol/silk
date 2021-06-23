@@ -181,7 +181,42 @@ pub struct BpfComputeBudget {
     pub cpi_bytes_per_unit: u64,
     /// Base number of compute units consumed to get a sysvar
     pub sysvar_base_cost: u64,
+    /// Base number of compute units consumed to call BigNum new from u32 value
+    pub bignum_from_u32_base_cost: u64,
+    /// Base number of compute units consumed to call BigNum new from a decimal string
+    pub bignum_from_dec_str_base_cost: u64,
+    /// Incremental number of units consumed to drop/dealloc BigNum (based on bytes)
+    pub bignum_mod_exp_base_cost: u64,
+    /// Number of compute units consumed by logging a `BigNum`
+    pub bignum_log_cost: u64,
+    /// Number of compute units consumed by BigNum add
+    pub bignum_add_cost: u64,
+    /// Number of compute units consumed by BigNum subtract
+    pub bignum_sub_cost: u64,
+    /// Number of compute units consumed by BigNum mutliply
+    pub bignum_mul_cost: u64,
+    /// Number of compute units consumed by BigNum divide
+    pub bignum_div_cost: u64,
+    /// Number of compute units consumed by BigNum exp
+    pub bignum_exp_cost: u64,
+    /// Number of compute units consumed by BigNum sqr
+    pub bignum_sqr_cost: u64,
+    /// Number of compute units consumed by BigNum mod_sqr
+    pub bignum_mod_sqr_cost: u64,
+    /// Number of compute units consumed by BigNum mod_mul
+    pub bignum_mod_mul_cost: u64,
+    /// Number of compute units consumed by BigNum mod_inv
+    pub bignum_mod_inv_cost: u64,
+    /// Number of compute units consumed for base BigNum data
+    pub bignum_word_cost: u64,
+    /// Divsor for number of compute units consumed for base BigNum data
+    pub bignum_word_cost_divisor: u64,
+    /// Number of compute units consumed for BigNum data from decimal string
+    pub bignum_from_dec_word_cost: u64,
+    /// Number of compute units costing the from_slice operation
+    pub bignum_from_bytes_word_cost: u64,
 }
+
 impl Default for BpfComputeBudget {
     fn default() -> Self {
         Self::new()
@@ -204,6 +239,23 @@ impl BpfComputeBudget {
             max_cpi_instruction_size: 1280, // IPv6 Min MTU size
             cpi_bytes_per_unit: 250,        // ~50MB at 200,000 units
             sysvar_base_cost: 100,
+            bignum_from_u32_base_cost: 100,
+            bignum_from_dec_str_base_cost: 100,
+            bignum_mod_exp_base_cost: 100,
+            bignum_log_cost: 100,
+            bignum_add_cost: 30,
+            bignum_sub_cost: 30,
+            bignum_mul_cost: 60,
+            bignum_div_cost: 60,
+            bignum_exp_cost: 60,
+            bignum_sqr_cost: 30,
+            bignum_mod_sqr_cost: 60,
+            bignum_mod_mul_cost: 90,
+            bignum_mod_inv_cost: 90,
+            bignum_word_cost: 6,
+            bignum_word_cost_divisor: 32,
+            bignum_from_dec_word_cost: 1000,
+            bignum_from_bytes_word_cost: 4,
         }
     }
 }

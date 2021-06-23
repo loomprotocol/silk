@@ -430,6 +430,7 @@ fn test_program_bpf_sanity() {
     {
         programs.extend_from_slice(&[
             ("alloc", true),
+            ("bignumber", true),
             ("bpf_to_bpf", true),
             ("float", true),
             ("multiple_static", true),
@@ -449,6 +450,7 @@ fn test_program_bpf_sanity() {
         programs.extend_from_slice(&[
             ("solana_bpf_rust_128bit", true),
             ("solana_bpf_rust_alloc", true),
+            ("solana_bpf_rust_bignumber", true),
             ("solana_bpf_rust_custom_heap", true),
             ("solana_bpf_rust_dep_crate", true),
             ("solana_bpf_rust_external_spend", false),
@@ -1292,8 +1294,9 @@ fn assert_instruction_count() {
         programs.extend_from_slice(&[
             ("solana_bpf_rust_128bit", 584),
             ("solana_bpf_rust_alloc", 7082),
+            ("solana_bpf_rust_bignumber", 10853),
             ("solana_bpf_rust_custom_heap", 522),
-            ("solana_bpf_rust_dep_crate", 2),
+            ("solana_bpf_rust_dep_crate", 47),
             ("solana_bpf_rust_external_spend", 504),
             ("solana_bpf_rust_iter", 724),
             ("solana_bpf_rust_many_args", 233),
@@ -1303,7 +1306,7 @@ fn assert_instruction_count() {
             ("solana_bpf_rust_param_passing", 46),
             ("solana_bpf_rust_rand", 481),
             ("solana_bpf_rust_sanity", 873),
-            ("solana_bpf_rust_sha", 32295),
+            ("solana_bpf_rust_sha", 32301),
         ]);
     }
 

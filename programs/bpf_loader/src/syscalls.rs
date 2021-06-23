@@ -1,5 +1,6 @@
 use crate::{alloc, BpfError};
 use alloc::Alloc;
+use openssl::bn::*;
 use solana_rbpf::{
     aligned_memory::AlignedMemory,
     ebpf::MM_HEAP_START,
@@ -13,13 +14,14 @@ use solana_sdk::{
     account::{Account, AccountSharedData, ReadableAccount},
     account_info::AccountInfo,
     account_utils::StateMut,
+    bignumber::FfiBigNumber,
     blake3, bpf_loader, bpf_loader_deprecated,
     bpf_loader_upgradeable::{self, UpgradeableLoaderState},
     clock::Clock,
     entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     epoch_schedule::EpochSchedule,
     feature_set::{
-        blake3_syscall_enabled, cpi_data_cost, demote_sysvar_write_locks,
+        bignum_syscall_enabled, blake3_syscall_enabled, cpi_data_cost, demote_sysvar_write_locks,
         enforce_aligned_host_addrs, keccak256_syscall_enabled, memory_ops_syscalls,
         sysvar_via_syscall, update_data_on_realloc,
     },
@@ -76,6 +78,40 @@ pub enum SyscallError {
     TooManyAccounts,
     #[error("Overlapping copy")]
     CopyOverlapping,
+    #[error("BigNumber: Modular exponentiation error {0}")]
+    BigNumberModExpError(String),
+    #[error("BigNumber: Bytes would exceed buffer provided")]
+    BigNumberToBytesError,
+    #[error("BigNumber: expects {0} args but provided {1}")]
+    BigNumberArgError(u64, u64),
+    #[error("BigNumber: add error {0}")]
+    BigNumberAddError(String),
+    #[error("BigNumber: sub error {0}")]
+    BigNumberSubError(String),
+    #[error("BigNumber: mul error {0}")]
+    BigNumberMulError(String),
+    #[error("BigNumber: div error {0}")]
+    BigNumberDivError(String),
+    #[error("BigNumber: exp error {0}")]
+    BigNumberExpError(String),
+    #[error("BigNumber: sqr error {0}")]
+    BigNumberSqrError(String),
+    #[error("BigNumber: mod_sqr error {0}")]
+    BigNumberModSqrError(String),
+    #[error("BigNumber: mod_mul error {0}")]
+    BigNumberModMulError(String),
+    #[error("BigNumber: mod_inv error {0}")]
+    BigNumberModInvError(String),
+    #[error("BigNumber: error in executing operation {0}")]
+    BigNumberOperationError(String),
+    #[error("BigNumber: unknow error encountered")]
+    BigNumberErrorUnknown,
+    #[error("BigNumber: error in converting decimal string to BigNum")]
+    BigNumberFromDecStrError,
+    #[error("BigNumber: size > MAX_BIGNUM_BYTE_SIZE bytes (1 k) error")]
+    BigNumberSizeError,
+    #[error("BigNumber: from_slice error {0}")]
+    BigNumberFromSliceError(String),
 }
 impl From<SyscallError> for EbpfError<BpfError> {
     fn from(error: SyscallError) -> Self {
@@ -166,6 +202,30 @@ pub fn register_syscalls(
 
     // Memory allocator
     syscall_registry.register_syscall_by_name(b"sol_alloc_free_", SyscallAllocFree::call)?;
+
+    if invoke_context.is_feature_active(&bignum_syscall_enabled::id()) {
+        syscall_registry
+            .register_syscall_by_name(b"sol_bignum_from_u32_", SyscallBigNumFromU32::call)?;
+        syscall_registry
+            .register_syscall_by_name(b"sol_bignum_from_dec_str_", SyscallBigNumFromDecStr::call)?;
+        syscall_registry
+            .register_syscall_by_name(b"sol_bignum_mod_exp_", SyscallBigNumModExp::call)?;
+        syscall_registry.register_syscall_by_name(b"sol_bignum_log_", SyscallBigNumLog::call)?;
+        syscall_registry.register_syscall_by_name(b"sol_bignum_add_", SyscallBigNumAdd::call)?;
+        syscall_registry.register_syscall_by_name(b"sol_bignum_sub_", SyscallBigNumSub::call)?;
+        syscall_registry.register_syscall_by_name(b"sol_bignum_mul_", SyscallBigNumMul::call)?;
+        syscall_registry.register_syscall_by_name(b"sol_bignum_div_", SyscallBigNumDiv::call)?;
+        syscall_registry.register_syscall_by_name(b"sol_bignum_exp_", SyscallBigNumExp::call)?;
+        syscall_registry.register_syscall_by_name(b"sol_bignum_sqr_", SyscallBigNumSqr::call)?;
+        syscall_registry
+            .register_syscall_by_name(b"sol_bignum_mod_sqr_", SyscallBigNumModSqr::call)?;
+        syscall_registry
+            .register_syscall_by_name(b"sol_bignum_mod_mul_", SyscallBigNumModMul::call)?;
+        syscall_registry
+            .register_syscall_by_name(b"sol_bignum_mod_inv_", SyscallBigNumModInv::call)?;
+        syscall_registry
+            .register_syscall_by_name(b"sol_bignum_from_bytes_", SyscallBigNumFromBytes::call)?;
+    }
 
     Ok(syscall_registry)
 }
@@ -326,6 +386,163 @@ pub fn bind_syscall_context_objects<'a>(
         Box::new(SyscallBlake3 {
             base_cost: bpf_compute_budget.sha256_base_cost,
             byte_cost: bpf_compute_budget.sha256_byte_cost,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+
+    // Bignum
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumFromU32 {
+            cost: bpf_compute_budget.bignum_from_u32_base_cost,
+            word_cost: bpf_compute_budget.bignum_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumFromDecStr {
+            cost: bpf_compute_budget.bignum_from_dec_str_base_cost,
+            word_cost: bpf_compute_budget.bignum_from_dec_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumAdd {
+            cost: bpf_compute_budget.bignum_add_cost,
+            word_cost: bpf_compute_budget.bignum_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumSub {
+            cost: bpf_compute_budget.bignum_sub_cost,
+            word_cost: bpf_compute_budget.bignum_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumMul {
+            cost: bpf_compute_budget.bignum_mul_cost,
+            word_cost: bpf_compute_budget.bignum_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumDiv {
+            cost: bpf_compute_budget.bignum_div_cost,
+            word_cost: bpf_compute_budget.bignum_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumExp {
+            cost: bpf_compute_budget.bignum_exp_cost,
+            word_cost: bpf_compute_budget.bignum_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumSqr {
+            cost: bpf_compute_budget.bignum_sqr_cost,
+            word_cost: bpf_compute_budget.bignum_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumModSqr {
+            cost: bpf_compute_budget.bignum_mod_sqr_cost,
+            word_cost: bpf_compute_budget.bignum_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumModMul {
+            cost: bpf_compute_budget.bignum_mod_mul_cost,
+            word_cost: bpf_compute_budget.bignum_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumModInv {
+            cost: bpf_compute_budget.bignum_mod_inv_cost,
+            word_cost: bpf_compute_budget.bignum_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumModExp {
+            cost: bpf_compute_budget.bignum_mod_exp_base_cost,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumLog {
+            cost: bpf_compute_budget.bignum_log_cost,
+            word_cost: bpf_compute_budget.bignum_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
+            compute_meter: invoke_context.get_compute_meter(),
+            logger: invoke_context.get_logger(),
+            loader_id,
+        }),
+    );
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        invoke_context.is_feature_active(&bignum_syscall_enabled::id()),
+        Box::new(SyscallBigNumFromBytes {
+            cost: bpf_compute_budget.bignum_from_u32_base_cost,
+            word_cost: bpf_compute_budget.bignum_from_bytes_word_cost,
+            word_div_cost: bpf_compute_budget.bignum_word_cost_divisor,
             compute_meter: invoke_context.get_compute_meter(),
             loader_id,
         }),
@@ -2369,6 +2586,1750 @@ fn call<'a>(
     Ok(SUCCESS)
 }
 
+/// Bignum data costs calculator
+pub const MAX_BIGNUM_BYTE_SIZE: u64 = 1024;
+macro_rules! calc_bignum_cost {
+    ($input_self:expr, $input_size_in_bytes:expr) => {
+        $input_self.cost
+            + ($input_self.word_cost as f64
+                * ($input_size_in_bytes as f64 / $input_self.word_div_cost as f64).ceil())
+                as u64
+    };
+}
+
+/// Transposes a bn::BigNum into an FfiBignumber array of bytes
+fn bignum_to_ffibignumber(
+    bignum: &BigNum,
+    bnffi: &mut FfiBigNumber,
+    loader_id: &Pubkey,
+    memory_mapping: &MemoryMapping,
+    result: &mut Result<u64, EbpfError<BpfError>>,
+) {
+    // Get the BigNum vector and size
+    let big_number_bytes = bignum.to_vec();
+    let big_number_len = big_number_bytes.len() as u64;
+    (*bnffi).is_negative = bignum.is_negative();
+    // Fail if result size exceeds 1024 bytes (8192 bits)
+    if big_number_len > MAX_BIGNUM_BYTE_SIZE {
+        *result = Err(SyscallError::BigNumberSizeError.into())
+    }
+    // Fail if we can't support the full array of bytes
+    else if big_number_len as u64 > bnffi.data_len {
+        *result = Err(SyscallError::BigNumberArgError(big_number_len, bnffi.data_len).into())
+    } else {
+        // Get the output array pointer
+        let bn_buffer_out = question_mark!(
+            translate_slice_mut::<u8>(memory_mapping, bnffi.data, bnffi.data_len, loader_id, true),
+            result
+        );
+        // Zero result
+        if big_number_len == 0 {
+            bn_buffer_out[0] = 0u8;
+            (*bnffi).data_len = 1;
+        } else if big_number_len == bnffi.data_len {
+            (*bn_buffer_out).copy_from_slice(&big_number_bytes);
+        } else {
+            bn_buffer_out[..big_number_bytes.len()].copy_from_slice(&big_number_bytes);
+            (*bnffi).data_len = big_number_len;
+        }
+        *result = Ok(SUCCESS)
+    }
+}
+
+/// Transposes a FfiBignumber array of bytes to a bn::BigNum
+fn ffibignumber_to_bignum(ffi: &FfiBigNumber, ffi_data: &[u8]) -> Result<BigNum, SyscallError> {
+    let ffi_bn = BigNum::from_slice(ffi_data);
+    match ffi_bn {
+        Ok(mut bn) => {
+            bn.set_negative(ffi.is_negative);
+            Ok(bn)
+        }
+        Err(es) => {
+            if let Some(reason) = es.errors()[0].reason() {
+                Err(SyscallError::BigNumberOperationError(reason.to_string()))
+            } else {
+                Err(SyscallError::BigNumberErrorUnknown)
+            }
+        }
+    }
+}
+
+/// BIGNUM sol_bignum_from_u32 ingests a u32 and
+/// produces an absolute big endian array
+struct SyscallBigNumFromU32<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumFromU32<'a> {
+    fn call(
+        &mut self,
+        bn_ffi_out_addr: u64,
+        u32_val: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        question_mark!(
+            self.compute_meter.consume(calc_bignum_cost!(self, 4f64)),
+            result
+        );
+        // Get the output FfiBigNumber structure
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+        // Process BigNum call and populate results and
+        // collect, if any, error from OpenSSL
+        match BigNum::from_u32(u32_val as u32) {
+            Ok(bn) => bignum_to_ffibignumber(
+                &bn,
+                bn_syscall_result,
+                self.loader_id,
+                memory_mapping,
+                result,
+            ),
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into())
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into())
+                }
+            }
+        }
+    }
+}
+/// BIGNUM sol_bignum_from_dec_str bounds checks,
+/// validates and ingests a decimal string and
+/// produces an absoluate big endian array
+struct SyscallBigNumFromDecStr<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumFromDecStr<'a> {
+    fn call(
+        &mut self,
+        in_dec_str_addr: u64,
+        in_dec_str_len: u64,
+        bn_ffi_out_addr: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        question_mark!(
+            self.compute_meter
+                .consume(calc_bignum_cost!(self, in_dec_str_len as f64)),
+            result
+        );
+
+        // Get the string and convert to BigNum
+        let in_dec_raw = question_mark!(
+            translate_slice::<u8>(
+                memory_mapping,
+                in_dec_str_addr,
+                in_dec_str_len,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+
+        let i = match in_dec_raw.iter().position(|byte| *byte == 0) {
+            Some(i) => i,
+            None => in_dec_str_len as usize,
+        };
+        let raw_string = match from_utf8(&in_dec_raw[..i]) {
+            Ok(s) => s,
+            Err(_) => {
+                *result = Err(SyscallError::BigNumberToBytesError.into());
+                return;
+            }
+        };
+
+        // Get the output FfiBigNumber structure
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+        // Handle expected result > MAX_BIGNUM_BYTE_SIZE bytes
+        if bn_syscall_result.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+        }
+        // Handle buffer too small or empty strings
+        else if bn_syscall_result.data_len == 0 || raw_string.is_empty() {
+            *result = Err(SyscallError::BigNumberToBytesError.into())
+        } else {
+            // Process BigNum call and populate results
+            match BigNum::from_dec_str(raw_string) {
+                Ok(bn) => bignum_to_ffibignumber(
+                    &bn,
+                    bn_syscall_result,
+                    self.loader_id,
+                    memory_mapping,
+                    result,
+                ),
+                Err(_) => *result = Err(SyscallError::BigNumberFromDecStrError.into()),
+            };
+        }
+    }
+}
+
+/// BIGNUM sol_bignum_from_slice ingests a absolute big endian array for
+/// validation and size checking
+struct SyscallBigNumFromBytes<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumFromBytes<'a> {
+    fn call(
+        &mut self,
+        in_bytes_addr: u64,
+        in_bytes_len: u64,
+        bn_ffi_out_addr: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        // Compute costs
+        question_mark!(
+            self.compute_meter
+                .consume(calc_bignum_cost!(self, in_bytes_len as f64)),
+            result
+        );
+
+        // Get array pointer of bytes to consume
+        let rhs_data = question_mark!(
+            translate_slice::<u8>(
+                memory_mapping,
+                in_bytes_addr,
+                in_bytes_len,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+        // Process BigNum call and populate results
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+        // Check max length of 1024 bytes
+        if !(1..=MAX_BIGNUM_BYTE_SIZE).contains(&in_bytes_len) {
+            *result = Err(SyscallError::BigNumberSizeError.into())
+        } else {
+            match BigNum::from_slice(rhs_data) {
+                Ok(bn_result) => bignum_to_ffibignumber(
+                    &bn_result,
+                    bn_syscall_result,
+                    self.loader_id,
+                    memory_mapping,
+                    result,
+                ),
+                Err(es) => {
+                    if let Some(reason) = es.errors()[0].reason() {
+                        *result =
+                            Err(SyscallError::BigNumberFromSliceError(reason.to_string()).into());
+                    } else {
+                        *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// BIGNUM sol_bignum_add bounds checks and adds two BigNumber and
+/// produces a result.
+struct SyscallBigNumAdd<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumAdd<'a> {
+    fn call(
+        &mut self,
+        lhs_ffi_in_addr: u64,
+        rhs_ffi_in_addr: u64,
+        bn_ffi_out_addr: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        // Get the LHS FfiBigNumber value structure
+        let bn_syscall_lhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, lhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Get the RHS FfiBigNumber value structure
+        let bn_syscall_rhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, rhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Compute costs
+        question_mark!(
+            self.compute_meter.consume(calc_bignum_cost!(
+                self,
+                (bn_syscall_lhs.data_len + bn_syscall_rhs.data_len) as f64
+            )),
+            result
+        );
+        // Bounds check on input
+        if bn_syscall_rhs.data_len > MAX_BIGNUM_BYTE_SIZE
+            || bn_syscall_lhs.data_len > MAX_BIGNUM_BYTE_SIZE
+        {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+            return;
+        }
+
+        // Get the data pointer big numbers
+        let lhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_lhs.data,
+                        bn_syscall_lhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        let rhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_rhs.data,
+                        bn_syscall_rhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+
+        // Process BigNum call and populate results
+        let mut bn_result = match BigNum::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into())
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+        if bn_syscall_result.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+        } else {
+            match bn_result.checked_add(&lhs_bn, &rhs_bn) {
+                Ok(_) => bignum_to_ffibignumber(
+                    &bn_result,
+                    bn_syscall_result,
+                    self.loader_id,
+                    memory_mapping,
+                    result,
+                ),
+                Err(es) => {
+                    if let Some(reason) = es.errors()[0].reason() {
+                        *result = Err(SyscallError::BigNumberAddError(reason.to_string()).into())
+                    } else {
+                        *result = Err(SyscallError::BigNumberErrorUnknown.into())
+                    }
+                }
+            };
+        }
+    }
+}
+
+/// BIGNUM sol_bignum_sub bounds checks and subtracts two BigNumber and
+/// produces a result.
+struct SyscallBigNumSub<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumSub<'a> {
+    fn call(
+        &mut self,
+        lhs_ffi_in_addr: u64,
+        rhs_ffi_in_addr: u64,
+        bn_ffi_out_addr: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        // Get the LHS FfiBigNumber value structure
+        let bn_syscall_lhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, lhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Get the RHS FfiBigNumber value structure
+        let bn_syscall_rhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, rhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Compute costs
+        question_mark!(
+            self.compute_meter.consume(calc_bignum_cost!(
+                self,
+                (bn_syscall_lhs.data_len + bn_syscall_rhs.data_len) as f64
+            )),
+            result
+        );
+        // Bounds check on input
+        if bn_syscall_rhs.data_len > MAX_BIGNUM_BYTE_SIZE
+            || bn_syscall_lhs.data_len > MAX_BIGNUM_BYTE_SIZE
+        {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+            return;
+        }
+
+        // Get the BigNum from data pointers
+        let lhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_lhs.data,
+                        bn_syscall_lhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        let rhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_rhs.data,
+                        bn_syscall_rhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+
+        // Process BigNum call and populate results
+        let mut bn_result = match BigNum::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+
+        if bn_syscall_result.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+        } else {
+            match bn_result.checked_sub(&lhs_bn, &rhs_bn) {
+                Ok(_) => bignum_to_ffibignumber(
+                    &bn_result,
+                    bn_syscall_result,
+                    self.loader_id,
+                    memory_mapping,
+                    result,
+                ),
+                Err(es) => {
+                    if let Some(reason) = es.errors()[0].reason() {
+                        *result = Err(SyscallError::BigNumberSubError(reason.to_string()).into())
+                    } else {
+                        *result = Err(SyscallError::BigNumberErrorUnknown.into())
+                    }
+                }
+            };
+        }
+    }
+}
+/// BIGNUM sol_bignum_mul bounds checks and multiplies two BigNumber and
+/// produces a result.
+struct SyscallBigNumMul<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumMul<'a> {
+    fn call(
+        &mut self,
+        lhs_ffi_in_addr: u64,
+        rhs_ffi_in_addr: u64,
+        bn_ffi_out_addr: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        // Get the LHS FfiBigNumber value structure
+        let bn_syscall_lhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, lhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Get the RHS FfiBigNumber value structure
+        let bn_syscall_rhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, rhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Compute costs
+        question_mark!(
+            self.compute_meter.consume(calc_bignum_cost!(
+                self,
+                (bn_syscall_lhs.data_len + bn_syscall_rhs.data_len) as f64
+            )),
+            result
+        );
+        // Bounds check on input
+        if bn_syscall_rhs.data_len > MAX_BIGNUM_BYTE_SIZE
+            || bn_syscall_lhs.data_len > MAX_BIGNUM_BYTE_SIZE
+        {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+            return;
+        }
+
+        // Get the BigNum from data pointers
+        let lhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_lhs.data,
+                        bn_syscall_lhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        let rhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_rhs.data,
+                        bn_syscall_rhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+
+        // Process BigNum call and populate results
+        let mut bn_result = match BigNum::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let mut bn_ctx = match BigNumContext::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+
+        if bn_syscall_result.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+        } else {
+            match bn_result.checked_mul(&lhs_bn, &rhs_bn, &mut bn_ctx) {
+                Ok(_) => bignum_to_ffibignumber(
+                    &bn_result,
+                    bn_syscall_result,
+                    self.loader_id,
+                    memory_mapping,
+                    result,
+                ),
+                Err(es) => {
+                    if let Some(reason) = es.errors()[0].reason() {
+                        *result = Err(SyscallError::BigNumberMulError(reason.to_string()).into());
+                    } else {
+                        *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                    }
+                }
+            }
+        }
+    }
+}
+/// BIGNUM sol_bignum_div bounds checks and divides two BigNumber and
+/// produces a result.
+struct SyscallBigNumDiv<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumDiv<'a> {
+    fn call(
+        &mut self,
+        lhs_ffi_in_addr: u64,
+        rhs_ffi_in_addr: u64,
+        bn_ffi_out_addr: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        // Get the LHS FfiBigNumber value structure
+        let bn_syscall_lhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, lhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Get the RHS FfiBigNumber value structure
+        let bn_syscall_rhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, rhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Compute costs
+        question_mark!(
+            self.compute_meter.consume(calc_bignum_cost!(
+                self,
+                (bn_syscall_lhs.data_len + bn_syscall_rhs.data_len) as f64
+            )),
+            result
+        );
+        // Bounds check on input
+        if bn_syscall_rhs.data_len > MAX_BIGNUM_BYTE_SIZE
+            || bn_syscall_lhs.data_len > MAX_BIGNUM_BYTE_SIZE
+        {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+            return;
+        }
+
+        // Get the BigNum from data pointers
+        let lhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_lhs.data,
+                        bn_syscall_lhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        let rhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_rhs.data,
+                        bn_syscall_rhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+
+        // Process BigNum call and populate results
+        let mut bn_result = match BigNum::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let mut bn_ctx = match BigNumContext::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+
+        if bn_syscall_result.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+        } else {
+            match bn_result.checked_div(&lhs_bn, &rhs_bn, &mut bn_ctx) {
+                Ok(_) => bignum_to_ffibignumber(
+                    &bn_result,
+                    bn_syscall_result,
+                    self.loader_id,
+                    memory_mapping,
+                    result,
+                ),
+                Err(es) => {
+                    if let Some(reason) = es.errors()[0].reason() {
+                        *result = Err(SyscallError::BigNumberDivError(reason.to_string()).into());
+                    } else {
+                        *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                    }
+                }
+            }
+        }
+    }
+}
+/// BIGNUM sol_bignum_sqr bounds checks squares a BigNumber and
+/// produces a result.
+struct SyscallBigNumSqr<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumSqr<'a> {
+    fn call(
+        &mut self,
+        rhs_ffi_in_addr: u64,
+        bn_ffi_out_addr: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        // Get the RHS FfiBigNumber value structure
+        let bn_syscall_rhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, rhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Compute costs
+        question_mark!(
+            self.compute_meter
+                .consume(calc_bignum_cost!(self, bn_syscall_rhs.data_len as f64)),
+            result
+        );
+        // Bounds check on input
+        if bn_syscall_rhs.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+            return;
+        }
+
+        // Get number to sqr ffi
+        let rhs_data = question_mark!(
+            translate_slice::<u8>(
+                memory_mapping,
+                bn_syscall_rhs.data,
+                bn_syscall_rhs.data_len as u64,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+        // Convert to BigNum
+        let rhs_bn = match BigNum::from_slice(rhs_data) {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        // Process BigNum call and populate results
+        let mut bn_result = match BigNum::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let mut bn_ctx = match BigNumContext::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+
+        if bn_syscall_result.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+        } else {
+            match bn_result.sqr(&rhs_bn, &mut bn_ctx) {
+                Ok(_) => bignum_to_ffibignumber(
+                    &bn_result,
+                    bn_syscall_result,
+                    self.loader_id,
+                    memory_mapping,
+                    result,
+                ),
+                Err(es) => {
+                    if let Some(reason) = es.errors()[0].reason() {
+                        *result = Err(SyscallError::BigNumberSqrError(reason.to_string()).into());
+                    } else {
+                        *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                    }
+                }
+            }
+        }
+    }
+}
+/// BIGNUM sol_bignum_exp bounds checks raises a BigNumber by exponent
+/// and produces a result.
+struct SyscallBigNumExp<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumExp<'a> {
+    fn call(
+        &mut self,
+        lhs_ffi_in_addr: u64,
+        rhs_ffi_in_addr: u64,
+        bn_ffi_out_addr: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        // Get the LHS FfiBigNumber value structure
+        let bn_syscall_lhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, lhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Get the RHS FfiBigNumber value structure
+        let bn_syscall_rhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, rhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Compute costs
+        question_mark!(
+            self.compute_meter.consume(calc_bignum_cost!(
+                self,
+                (bn_syscall_lhs.data_len + bn_syscall_rhs.data_len) as f64
+            )),
+            result
+        );
+        // Bounds check on input
+        if bn_syscall_rhs.data_len > MAX_BIGNUM_BYTE_SIZE
+            || bn_syscall_lhs.data_len > MAX_BIGNUM_BYTE_SIZE
+        {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+            return;
+        }
+
+        // Get the BigNum from data pointers
+        let lhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_lhs.data,
+                        bn_syscall_lhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        let rhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_rhs.data,
+                        bn_syscall_rhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+
+        // Process BigNum call and populate results
+        let mut bn_result = match BigNum::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let mut bn_ctx = match BigNumContext::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+        if bn_syscall_result.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+        } else {
+            match bn_result.exp(&lhs_bn, &rhs_bn, &mut bn_ctx) {
+                Ok(_) => bignum_to_ffibignumber(
+                    &bn_result,
+                    bn_syscall_result,
+                    self.loader_id,
+                    memory_mapping,
+                    result,
+                ),
+                Err(es) => {
+                    if let Some(reason) = es.errors()[0].reason() {
+                        *result = Err(SyscallError::BigNumberExpError(reason.to_string()).into())
+                    } else {
+                        *result = Err(SyscallError::BigNumberErrorUnknown.into())
+                    }
+                }
+            }
+        }
+    }
+}
+/// BIGNUM sol_bignum_mod_sqr bounds checks and performs
+/// lhs^2 % rhs and produces a result
+struct SyscallBigNumModSqr<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumModSqr<'a> {
+    fn call(
+        &mut self,
+        lhs_ffi_in_addr: u64,
+        rhs_ffi_in_addr: u64,
+        bn_ffi_out_addr: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        // Get the LHS FfiBigNumber value structure
+        let bn_syscall_lhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, lhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Get the RHS FfiBigNumber value structure
+        let bn_syscall_rhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, rhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Compute costs
+        question_mark!(
+            self.compute_meter.consume(calc_bignum_cost!(
+                self,
+                (bn_syscall_lhs.data_len + bn_syscall_rhs.data_len) as f64
+            )),
+            result
+        );
+        // Bounds check on input
+        if bn_syscall_rhs.data_len > MAX_BIGNUM_BYTE_SIZE
+            || bn_syscall_lhs.data_len > MAX_BIGNUM_BYTE_SIZE
+        {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+            return;
+        }
+
+        // Get the BigNum from data pointers
+        let lhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_lhs.data,
+                        bn_syscall_lhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        let rhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_rhs.data,
+                        bn_syscall_rhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+
+        // Process BigNum call and populate results
+        let mut bn_result = match BigNum::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let mut bn_ctx = match BigNumContext::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+
+        if bn_syscall_result.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+        } else {
+            match bn_result.mod_sqr(&lhs_bn, &rhs_bn, &mut bn_ctx) {
+                Ok(_) => bignum_to_ffibignumber(
+                    &bn_result,
+                    bn_syscall_result,
+                    self.loader_id,
+                    memory_mapping,
+                    result,
+                ),
+                Err(es) => {
+                    if let Some(reason) = es.errors()[0].reason() {
+                        *result =
+                            Err(SyscallError::BigNumberModSqrError(reason.to_string()).into());
+                    } else {
+                        *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Calculates a data cost for mod_exp as per https://eips.ethereum.org/EIPS/eip-198
+fn calculate_exp_byte_cost(
+    base: &BigNum,
+    exponent: &BigNum,
+    modulus: &BigNum,
+) -> Result<u64, SyscallError> {
+    let zero = match BigNum::from_u32(0) {
+        Ok(bn) => bn,
+        Err(es) => {
+            if let Some(reason) = es.errors()[0].reason() {
+                return Err(SyscallError::BigNumberOperationError(reason.to_string()));
+            } else {
+                return Err(SyscallError::BigNumberErrorUnknown);
+            }
+        }
+    };
+    let exp_bytes_length = exponent.num_bytes() as u32;
+    let exp_bits_length = exponent.num_bits() as u32;
+    let base_bytes_length = base.num_bytes() as u32;
+    // Adjusted length calculation
+    let adjusted_exp_length = match exp_bytes_length {
+        0..=32 if exponent == &zero => 0,
+        0..=32 => exp_bits_length - 1,
+        _ => {
+            let first_32 = match BigNum::from_slice(&exponent.as_ref().to_vec()[0..31]) {
+                Ok(bn) => bn,
+                Err(es) => {
+                    if let Some(reason) = es.errors()[0].reason() {
+                        return Err(SyscallError::BigNumberOperationError(reason.to_string()));
+                    } else {
+                        return Err(SyscallError::BigNumberErrorUnknown);
+                    }
+                }
+            };
+            if first_32 == zero {
+                8 * (exp_bytes_length - 32)
+            } else {
+                8 * (exp_bytes_length - 32) + ((first_32.num_bits() as u32) - 1)
+            }
+        }
+    } as u64;
+    // mult_complexity
+    let mult_compexity_arg = std::cmp::max(base_bytes_length, modulus.num_bytes() as u32) as u64;
+    let mult_complexity = if mult_compexity_arg <= 64 {
+        mult_compexity_arg * mult_compexity_arg
+    } else if mult_compexity_arg <= 1024 {
+        (((mult_compexity_arg * mult_compexity_arg) / 4) + (96 * mult_compexity_arg)) - 3_072
+    } else {
+        (((mult_compexity_arg * mult_compexity_arg) / 16) + (480 * mult_compexity_arg)) - 199_680
+    };
+    // Calc data costs and return
+    Ok(
+        ((mult_complexity * std::cmp::max(adjusted_exp_length, 1u64)) as f64 / 20f64).floor()
+            as u64,
+    )
+}
+/// BIGNUM sol_bignum_mod_exp bounds checks and performs
+/// lhs^rhs % mod and produces a result
+struct SyscallBigNumModExp<'a> {
+    cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumModExp<'a> {
+    fn call(
+        &mut self,
+        lhs_ffi_in_addr: u64,
+        rhs_ffi_in_addr: u64,
+        mod_ffi_in_addr: u64,
+        bn_ffi_out_addr: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        // Get the LHS FfiBigNumber value structure
+        let bn_syscall_lhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, lhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Get the RHS FfiBigNumber value structure
+        let bn_syscall_rhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, rhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Get the MOD FfiBigNumber value structure
+        let bn_syscall_mod = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, mod_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Get the BigNum from data pointers
+        let lhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_lhs.data,
+                        bn_syscall_lhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        let rhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_rhs.data,
+                        bn_syscall_rhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        let mod_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_mod.data,
+                        bn_syscall_mod.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        // Compute costs
+        let calc_val = match calculate_exp_byte_cost(&lhs_bn, &rhs_bn, &mod_bn) {
+            Ok(val) => val,
+            Err(e) => {
+                *result = Err(e.into());
+                return;
+            }
+        };
+        question_mark!(self.compute_meter.consume(self.cost + calc_val), result);
+        // Bounds check on input
+        if bn_syscall_rhs.data_len > MAX_BIGNUM_BYTE_SIZE
+            || bn_syscall_lhs.data_len > MAX_BIGNUM_BYTE_SIZE
+            || bn_syscall_mod.data_len > MAX_BIGNUM_BYTE_SIZE
+        {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+            return;
+        }
+
+        // Process BigNum call and populate results
+        let mut bn_result = match BigNum::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let mut bn_ctx = match BigNumContext::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+
+        if bn_syscall_result.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+        } else {
+            match bn_result.mod_exp(&lhs_bn, &rhs_bn, &mod_bn, &mut bn_ctx) {
+                Ok(_) => bignum_to_ffibignumber(
+                    &bn_result,
+                    bn_syscall_result,
+                    self.loader_id,
+                    memory_mapping,
+                    result,
+                ),
+                Err(e) => {
+                    if let Some(reason) = e.errors()[0].reason() {
+                        *result = Err(SyscallError::BigNumberModExpError(reason.to_string()).into())
+                    } else {
+                        *result = Err(SyscallError::BigNumberErrorUnknown.into())
+                    }
+                }
+            }
+        }
+    }
+}
+/// BIGNUM sol_bignum_mod_mul bounds checks and performs
+/// lhs*rhs % mod and produces a result
+struct SyscallBigNumModMul<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumModMul<'a> {
+    fn call(
+        &mut self,
+        lhs_ffi_in_addr: u64,
+        rhs_ffi_in_addr: u64,
+        mod_ffi_in_addr: u64,
+        bn_ffi_out_addr: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        // Get the LHS FfiBigNumber value structure
+        let bn_syscall_lhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, lhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Get the RHS FfiBigNumber value structure
+        let bn_syscall_rhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, rhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Get the MOD FfiBigNumber value structure
+        let bn_syscall_mod = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, mod_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Compute costs
+        question_mark!(
+            self.compute_meter.consume(calc_bignum_cost!(
+                self,
+                (bn_syscall_lhs.data_len + bn_syscall_rhs.data_len + bn_syscall_mod.data_len)
+                    as f64
+            )),
+            result
+        );
+        // Bounds check on input
+        if bn_syscall_rhs.data_len > MAX_BIGNUM_BYTE_SIZE
+            || bn_syscall_lhs.data_len > MAX_BIGNUM_BYTE_SIZE
+            || bn_syscall_mod.data_len > MAX_BIGNUM_BYTE_SIZE
+        {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+            return;
+        }
+
+        // Get the BigNum from data pointers
+        let lhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_lhs.data,
+                        bn_syscall_lhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        let rhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_rhs.data,
+                        bn_syscall_rhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        let mod_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_mod.data,
+                        bn_syscall_mod.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+
+        // Process BigNum call and populate results
+        let mut bn_result = match BigNum::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let mut bn_ctx = match BigNumContext::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+
+        if bn_syscall_result.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+        } else {
+            match bn_result.mod_mul(&lhs_bn, &rhs_bn, &mod_bn, &mut bn_ctx) {
+                Ok(_) => bignum_to_ffibignumber(
+                    &bn_result,
+                    bn_syscall_result,
+                    self.loader_id,
+                    memory_mapping,
+                    result,
+                ),
+                Err(e) => {
+                    if let Some(reason) = e.errors()[0].reason() {
+                        *result = Err(SyscallError::BigNumberModMulError(reason.to_string()).into())
+                    } else {
+                        *result = Err(SyscallError::BigNumberErrorUnknown.into())
+                    }
+                }
+            }
+        }
+    }
+}
+/// BIGNUM sol_bignum_mod_inv bounds checks and performs
+/// inverse(lhs % rhs) and produces a result
+struct SyscallBigNumModInv<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumModInv<'a> {
+    fn call(
+        &mut self,
+        lhs_ffi_in_addr: u64,
+        rhs_ffi_in_addr: u64,
+        bn_ffi_out_addr: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        // Get the LHS FfiBigNumber value structure
+        let bn_syscall_lhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, lhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Get the RHS FfiBigNumber value structure
+        let bn_syscall_rhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, rhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        // Compute costs
+        question_mark!(
+            self.compute_meter.consume(calc_bignum_cost!(
+                self,
+                (bn_syscall_lhs.data_len + bn_syscall_rhs.data_len) as f64
+            )),
+            result
+        );
+        // Bounds check on input
+        if bn_syscall_rhs.data_len > MAX_BIGNUM_BYTE_SIZE
+            || bn_syscall_lhs.data_len > MAX_BIGNUM_BYTE_SIZE
+        {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+            return;
+        }
+
+        // Get the BigNum from data pointers
+        let lhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_lhs.data,
+                        bn_syscall_lhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        let rhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_rhs.data,
+                        bn_syscall_rhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+
+        // Process BigNum call and populate results
+        let mut bn_result = match BigNum::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let mut bn_ctx = match BigNumContext::new() {
+            Ok(bn) => bn,
+            Err(es) => {
+                if let Some(reason) = es.errors()[0].reason() {
+                    *result = Err(SyscallError::BigNumberOperationError(reason.to_string()).into());
+                } else {
+                    *result = Err(SyscallError::BigNumberErrorUnknown.into());
+                }
+                return;
+            }
+        };
+        let bn_syscall_result = question_mark!(
+            translate_type_mut::<FfiBigNumber>(
+                memory_mapping,
+                bn_ffi_out_addr,
+                self.loader_id,
+                true
+            ),
+            result
+        );
+
+        if bn_syscall_result.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+        } else {
+            match bn_result.mod_inverse(&lhs_bn, &rhs_bn, &mut bn_ctx) {
+                Ok(_) => bignum_to_ffibignumber(
+                    &bn_result,
+                    bn_syscall_result,
+                    self.loader_id,
+                    memory_mapping,
+                    result,
+                ),
+                Err(e) => {
+                    if let Some(reason) = e.errors()[0].reason() {
+                        *result = Err(SyscallError::BigNumberModInvError(reason.to_string()).into())
+                    } else {
+                        *result = Err(SyscallError::BigNumberErrorUnknown.into())
+                    }
+                }
+            }
+        }
+    }
+}
+/// Logs a BigNumber to system log
+struct SyscallBigNumLog<'a> {
+    cost: u64,
+    word_cost: u64,
+    word_div_cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    logger: Rc<RefCell<dyn Logger>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallBigNumLog<'a> {
+    fn call(
+        &mut self,
+        lhs_ffi_in_addr: u64,
+        _arg2: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        // Get the LHS FfiBigNumber value structure
+        let bn_syscall_lhs = question_mark!(
+            translate_type::<FfiBigNumber>(memory_mapping, lhs_ffi_in_addr, self.loader_id, true),
+            result
+        );
+        question_mark!(
+            self.compute_meter
+                .consume(calc_bignum_cost!(self, bn_syscall_lhs.data_len as f64)),
+            result
+        );
+        // Bounds check on input
+        if bn_syscall_lhs.data_len > MAX_BIGNUM_BYTE_SIZE {
+            *result = Err(SyscallError::BigNumberSizeError.into());
+            return;
+        }
+
+        // Get the BigNum from data pointers
+        let lhs_bn = question_mark!(
+            ffibignumber_to_bignum(
+                bn_syscall_lhs,
+                question_mark!(
+                    translate_slice::<u8>(
+                        memory_mapping,
+                        bn_syscall_lhs.data,
+                        bn_syscall_lhs.data_len as u64,
+                        self.loader_id,
+                        true
+                    ),
+                    result
+                )
+            ),
+            result
+        );
+        stable_log::program_log(&self.logger, &lhs_bn.to_string());
+        *result = Ok(0);
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2389,6 +4350,32 @@ mod tests {
         enable_instruction_meter: true,
         enable_instruction_tracing: false,
     };
+
+    const LONG_DEC_STRING: &str =
+        "1470463693494555670176851280755142329532258274256991544781479988\
+    712408107190720087233560906792937436573943189716784305633216335039\
+    300236370809933808677983409391545753391897467230180786617074456716\
+    591448871466263060696957107957862111484694673874424855359234132302\
+    162208163361387727626078022804936564470716886986414133429438273232\
+    416190048073715996321578752244853524209178212395809614878549824744\
+    227969245726015222693764433413133633359171080169137831743765672068\
+    374040331773668233371864426354886263106537340208256187214278963052\
+    996538599452325797319977413534714912781503130883692806087195354368\
+    8304190675878204079994222";
+
+    const NEG_LONG_DEC_STRING: &str =
+        "-1470463693494555670176851280755142329532258274256991544781479988\
+    712408107190720087233560906792937436573943189716784305633216335039\
+    300236370809933808677983409391545753391897467230180786617074456716\
+    591448871466263060696957107957862111484694673874424855359234132302\
+    162208163361387727626078022804936564470716886986414133429438273232\
+    416190048073715996321578752244853524209178212395809614878549824744\
+    227969245726015222693764433413133633359171080169137831743765672068\
+    374040331773668233371864426354886263106537340208256187214278963052\
+    996538599452325797319977413534714912781503130883692806087195354368\
+    8304190675878204079994222";
+
+    const NOT_A_VALID_DEC_STRING: &str = "ZBikk123A972";
 
     macro_rules! assert_access_violation {
         ($result:expr, $va:expr, $len:expr) => {
@@ -3340,5 +5327,599 @@ mod tests {
             result.unwrap();
             assert_eq!(got_rent, src_rent);
         }
+    }
+
+    // Bignum tests
+    // creates new bignum with u32 value
+    fn new_u32_bignum(val: u32) -> (Vec<u8>, bool) {
+        let mut my_buffer = Vec::<u8>::with_capacity(4);
+        let bytes_len = 4u64;
+        let mut sol_out_ffi = FfiBigNumber {
+            data: 1024u64,
+            data_len: bytes_len,
+            is_negative: false,
+        };
+        // let bytes_len_addr = &mut bytes_len as *mut _ as u64;
+        let memory_mapping = MemoryMapping::new::<UserError>(
+            vec![
+                MemoryRegion {
+                    host_addr: &mut sol_out_ffi as *mut _ as u64,
+                    vm_addr: 96,
+                    len: std::mem::size_of::<FfiBigNumber>() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+                MemoryRegion {
+                    host_addr: my_buffer.as_mut_ptr() as *mut _ as u64,
+                    vm_addr: 1024,
+                    len: bytes_len,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+            ],
+            &DEFAULT_CONFIG,
+        )
+        .unwrap();
+
+        let compute_meter: Rc<RefCell<dyn ComputeMeter>> =
+            Rc::new(RefCell::new(MockComputeMeter { remaining: 400 }));
+        let mut syscall = SyscallBigNumFromU32 {
+            cost: 100,
+            word_cost: 6,
+            word_div_cost: 32,
+            compute_meter,
+            loader_id: &bpf_loader::id(),
+        };
+        let mut result: Result<u64, EbpfError<BpfError>> = Ok(0);
+        syscall.call(96, val as u64, 0, 0, 0, &memory_mapping, &mut result);
+        result.unwrap();
+        unsafe { my_buffer.set_len(sol_out_ffi.data_len as usize) };
+        (my_buffer, sol_out_ffi.is_negative)
+    }
+    // creates new bignum from decimal string
+    fn new_dec_str_bignum(string: &str) -> Result<(Vec<u8>, bool), EbpfError<BpfError>> {
+        let dec_str_addr = string.as_ptr() as *const _ as u64;
+        let dec_str_len = string.len();
+        // Return Ffi
+        let mut my_buffer = Vec::<u8>::with_capacity(dec_str_len);
+        let bytes_len = my_buffer.capacity() as u64;
+        let mut sol_out_ffi = FfiBigNumber {
+            data: 8196u64,
+            data_len: bytes_len,
+            is_negative: false,
+        };
+
+        let memory_mapping = MemoryMapping::new::<UserError>(
+            vec![
+                MemoryRegion {
+                    host_addr: dec_str_addr,
+                    vm_addr: 2048,
+                    len: dec_str_len as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: &mut sol_out_ffi as *mut _ as u64,
+                    vm_addr: 96,
+                    len: std::mem::size_of::<FfiBigNumber>() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+                MemoryRegion {
+                    host_addr: my_buffer.as_mut_ptr() as *mut _ as u64,
+                    vm_addr: 8196,
+                    len: bytes_len,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+            ],
+            &DEFAULT_CONFIG,
+        )
+        .unwrap();
+
+        let compute_meter: Rc<RefCell<dyn ComputeMeter>> =
+            Rc::new(RefCell::new(MockComputeMeter { remaining: 10_000 }));
+        let mut syscall = SyscallBigNumFromDecStr {
+            cost: 1,
+            word_cost: 6,
+            word_div_cost: 32,
+            compute_meter,
+            loader_id: &bpf_loader::id(),
+        };
+        let mut result: Result<u64, EbpfError<BpfError>> = Ok(0);
+        syscall.call(
+            2048,
+            dec_str_len as u64,
+            96,
+            0,
+            0,
+            &memory_mapping,
+            &mut result,
+        );
+        match result {
+            Ok(_) => {
+                unsafe { my_buffer.set_len(sol_out_ffi.data_len as usize) };
+                Ok((my_buffer, sol_out_ffi.is_negative))
+            }
+            Err(e) => Err(e),
+        }
+    }
+    // creates new bignum from a slice of data
+    fn new_from_slice_bignum(val: &[u8]) -> Result<(Vec<u8>, bool), EbpfError<BpfError>> {
+        let mut my_buffer = Vec::<u8>::with_capacity(val.len());
+        let bytes_len = val.len();
+        let mut sol_out_ffi = FfiBigNumber {
+            data: 8192u64,
+            data_len: bytes_len as u64,
+            is_negative: false,
+        };
+
+        let memory_mapping = MemoryMapping::new::<UserError>(
+            vec![
+                MemoryRegion {
+                    host_addr: val.as_ptr() as *const _ as u64,
+                    vm_addr: 0,
+                    len: bytes_len as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: &mut sol_out_ffi as *mut _ as u64,
+                    vm_addr: 4096,
+                    len: std::mem::size_of::<FfiBigNumber>() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+                MemoryRegion {
+                    host_addr: my_buffer.as_mut_ptr() as *mut _ as u64,
+                    vm_addr: 8192,
+                    len: bytes_len as u64,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+            ],
+            &DEFAULT_CONFIG,
+        )
+        .unwrap();
+
+        let compute_meter: Rc<RefCell<dyn ComputeMeter>> =
+            Rc::new(RefCell::new(MockComputeMeter { remaining: 400 }));
+        let mut syscall = SyscallBigNumFromBytes {
+            cost: 100,
+            word_cost: 1,
+            word_div_cost: 32,
+            compute_meter,
+            loader_id: &bpf_loader::id(),
+        };
+
+        let mut result: Result<u64, EbpfError<BpfError>> = Ok(0);
+        syscall.call(
+            0,
+            bytes_len as u64,
+            4096,
+            0,
+            0,
+            &memory_mapping,
+            &mut result,
+        );
+        match result {
+            Ok(_) => {
+                unsafe { my_buffer.set_len(sol_out_ffi.data_len as usize) };
+                Ok((my_buffer, sol_out_ffi.is_negative))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    #[test]
+    fn test_syscall_bignum_from_u32() {
+        let (bn_20, is_negative) = new_u32_bignum(20u32);
+        assert!(!is_negative);
+        let bn = BigNum::from_u32(20u32).unwrap().to_vec();
+        assert_eq!(bn_20, bn);
+    }
+
+    #[test]
+    fn test_syscall_bignum_from_dec_str() {
+        let (bn_long_dec, is_negative) = new_dec_str_bignum(LONG_DEC_STRING).unwrap();
+        assert!(!is_negative);
+        let bns = BigNum::from_dec_str(LONG_DEC_STRING).unwrap();
+        let bns_vec = bns.as_ref().to_vec();
+        assert_eq!(bn_long_dec, bns_vec);
+        let (bn_neg_long_dec, is_negative) = new_dec_str_bignum(NEG_LONG_DEC_STRING).unwrap();
+        assert!(is_negative);
+        let bns = BigNum::from_dec_str(NEG_LONG_DEC_STRING).unwrap();
+        let bns_vec = bns.as_ref().to_vec();
+        assert_eq!(bn_neg_long_dec, bns_vec);
+    }
+
+    #[test]
+    fn test_syscall_bignum_from_dec_str_fails() {
+        assert!(new_dec_str_bignum(NOT_A_VALID_DEC_STRING).is_err());
+        assert!(new_dec_str_bignum("").is_err());
+        assert!(new_dec_str_bignum(&format!("{}{}", LONG_DEC_STRING, LONG_DEC_STRING)).is_err());
+    }
+
+    #[test]
+    fn test_syscall_bignum_from_slice() {
+        let (bn_from_slice, is_negative) =
+            new_from_slice_bignum(&[255, 255, 255, 255, 255, 255, 255, 255]).unwrap();
+        assert_eq!(bn_from_slice, [255, 255, 255, 255, 255, 255, 255, 255]);
+        assert!(!is_negative);
+        assert!(new_from_slice_bignum(&vec![255u8; 1024]).is_ok());
+    }
+    #[test]
+    fn test_syscall_bignum_from_slice_fail() {
+        assert!(new_from_slice_bignum(&vec![255u8; 2048]).is_err());
+        assert!(new_from_slice_bignum(&[]).is_err());
+    }
+
+    // Wrapper for two argument bignum calls
+    fn invoke_bignum_two_arg_calls(
+        lhs: u32,
+        rhs: u32,
+        syscall: &mut dyn solana_rbpf::vm::SyscallObject<BpfError>,
+    ) -> Result<(Vec<u8>, bool), EbpfError<BpfError>> {
+        let (bn_arg1, bn1_is_negative) = new_u32_bignum(lhs);
+        let (bn_arg2, bn2_is_negative) = new_u32_bignum(rhs);
+        let bn1_len = bn_arg1.len();
+        let bn2_len = bn_arg2.len();
+        // Setup Ffi
+        let lhs_in_ffi = FfiBigNumber {
+            data: 1024u64,
+            data_len: bn1_len as u64,
+            is_negative: bn1_is_negative,
+        };
+        let rhs_in_ffi = FfiBigNumber {
+            data: 2048u64,
+            data_len: bn2_len as u64,
+            is_negative: bn2_is_negative,
+        };
+        let mut result_vec = Vec::<u8>::with_capacity(bn1_len + bn2_len);
+        let mut sol_out_ffi = FfiBigNumber {
+            data: 4096u64,
+            data_len: result_vec.capacity() as u64,
+            is_negative: false,
+        };
+
+        let memory_mapping = MemoryMapping::new::<UserError>(
+            vec![
+                MemoryRegion {
+                    host_addr: &lhs_in_ffi as *const _ as u64,
+                    vm_addr: 24,
+                    len: std::mem::size_of::<FfiBigNumber>() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: bn_arg1.as_ptr() as *const _ as u64,
+                    vm_addr: 1024,
+                    len: bn1_len as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: &rhs_in_ffi as *const _ as u64,
+                    vm_addr: 48,
+                    len: std::mem::size_of::<FfiBigNumber>() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: bn_arg2.as_ptr() as *const _ as u64,
+                    vm_addr: 2048,
+                    len: bn2_len as u64,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+                MemoryRegion {
+                    host_addr: &mut sol_out_ffi as *mut _ as u64,
+                    vm_addr: 72,
+                    len: std::mem::size_of::<FfiBigNumber>() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+                MemoryRegion {
+                    host_addr: result_vec.as_mut_ptr() as *mut _ as u64,
+                    vm_addr: 4096,
+                    len: result_vec.capacity() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+            ],
+            &DEFAULT_CONFIG,
+        )
+        .unwrap();
+
+        let mut result: Result<u64, EbpfError<BpfError>> = Ok(0);
+        syscall.call(24, 48, 72, 0, 0, &memory_mapping, &mut result);
+        match result {
+            Ok(_) => {
+                unsafe { result_vec.set_len(sol_out_ffi.data_len as usize) };
+                Ok((result_vec, sol_out_ffi.is_negative))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn invoke_bignum_three_arg_calls(
+        lhs: u32,
+        rhs: u32,
+        mod_arg: u32,
+        syscall: &mut dyn solana_rbpf::vm::SyscallObject<BpfError>,
+    ) -> Result<(Vec<u8>, bool), EbpfError<BpfError>> {
+        let (bn_arg1, bn1_is_negative) = new_u32_bignum(lhs);
+        let (bn_arg2, bn2_is_negative) = new_u32_bignum(rhs);
+        let (bn_arg3, bn3_is_negative) = new_u32_bignum(mod_arg);
+        let bn1_len = bn_arg1.len();
+        let bn2_len = bn_arg2.len();
+        let bn3_len = bn_arg3.len();
+        // Setup Ffi
+        let lhs_in_ffi = FfiBigNumber {
+            data: 1024u64,
+            data_len: bn1_len as u64,
+            is_negative: bn1_is_negative,
+        };
+        let rhs_in_ffi = FfiBigNumber {
+            data: 2048u64,
+            data_len: bn2_len as u64,
+            is_negative: bn2_is_negative,
+        };
+        let mod_in_ffi = FfiBigNumber {
+            data: 4096u64,
+            data_len: bn3_len as u64,
+            is_negative: bn3_is_negative,
+        };
+        let mut result_vec = Vec::<u8>::with_capacity(bn1_len * bn3_len);
+        let mut sol_out_ffi = FfiBigNumber {
+            data: 5120u64,
+            data_len: result_vec.capacity() as u64,
+            is_negative: false,
+        };
+        let memory_mapping = MemoryMapping::new::<UserError>(
+            vec![
+                MemoryRegion {
+                    host_addr: &lhs_in_ffi as *const _ as u64,
+                    vm_addr: 24,
+                    len: std::mem::size_of::<FfiBigNumber>() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: bn_arg1.as_ptr() as *const _ as u64,
+                    vm_addr: 1024,
+                    len: bn1_len as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: &rhs_in_ffi as *const _ as u64,
+                    vm_addr: 48,
+                    len: std::mem::size_of::<FfiBigNumber>() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: bn_arg2.as_ptr() as *const _ as u64,
+                    vm_addr: 2048,
+                    len: bn2_len as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: &mod_in_ffi as *const _ as u64,
+                    vm_addr: 72,
+                    len: std::mem::size_of::<FfiBigNumber>() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: bn_arg3.as_ptr() as *const _ as u64,
+                    vm_addr: 4096,
+                    len: bn3_len as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: &mut sol_out_ffi as *mut _ as u64,
+                    vm_addr: 96,
+                    len: std::mem::size_of::<FfiBigNumber>() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+                MemoryRegion {
+                    host_addr: result_vec.as_mut_ptr() as *mut _ as u64,
+                    vm_addr: 5120,
+                    len: result_vec.capacity() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+            ],
+            &DEFAULT_CONFIG,
+        )
+        .unwrap();
+        let mut result: Result<u64, EbpfError<BpfError>> = Ok(0);
+        syscall.call(24, 48, 72, 96, 0, &memory_mapping, &mut result);
+        match result {
+            Ok(_) => {
+                unsafe { result_vec.set_len(sol_out_ffi.data_len as usize) };
+                Ok((result_vec, sol_out_ffi.is_negative))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    #[test]
+    fn test_syscall_bignum_simple_math_pass() {
+        let mut syscall_bn_add = SyscallBigNumAdd {
+            cost: 1,
+            word_cost: 6,
+            word_div_cost: 32,
+            compute_meter: Rc::new(RefCell::new(MockComputeMeter { remaining: 200_u64 })),
+            loader_id: &bpf_loader::id(),
+        };
+        let mut syscall_bn_sub = SyscallBigNumSub {
+            cost: 1,
+            word_cost: 6,
+            word_div_cost: 32,
+            compute_meter: Rc::new(RefCell::new(MockComputeMeter { remaining: 200_u64 })),
+            loader_id: &bpf_loader::id(),
+        };
+        let mut syscall_bn_mul = SyscallBigNumMul {
+            cost: 1,
+            word_cost: 6,
+            word_div_cost: 32,
+            compute_meter: Rc::new(RefCell::new(MockComputeMeter { remaining: 200_u64 })),
+            loader_id: &bpf_loader::id(),
+        };
+        let mut syscall_bn_div = SyscallBigNumDiv {
+            cost: 1,
+            word_cost: 6,
+            word_div_cost: 32,
+            compute_meter: Rc::new(RefCell::new(MockComputeMeter { remaining: 200_u64 })),
+            loader_id: &bpf_loader::id(),
+        };
+        assert!(invoke_bignum_two_arg_calls(5, 258, &mut syscall_bn_add).is_ok());
+        assert!(invoke_bignum_two_arg_calls(5, 258, &mut syscall_bn_sub).is_ok());
+        assert!(invoke_bignum_two_arg_calls(300, 10, &mut syscall_bn_div).is_ok());
+        assert!(invoke_bignum_two_arg_calls(5, 5, &mut syscall_bn_mul).is_ok());
+    }
+
+    #[test]
+    fn test_syscall_bignum_simple_math_fail() {
+        let mut syscall_bn_div = SyscallBigNumDiv {
+            cost: 1,
+            word_cost: 6,
+            word_div_cost: 32,
+            compute_meter: Rc::new(RefCell::new(MockComputeMeter { remaining: 200_u64 })),
+            loader_id: &bpf_loader::id(),
+        };
+        assert!(invoke_bignum_two_arg_calls(300, 0, &mut syscall_bn_div).is_err());
+    }
+
+    #[test]
+    fn test_syscall_bignum_complex_math() {
+        let mut syscall_bn_exp = SyscallBigNumExp {
+            cost: 1,
+            word_cost: 6,
+            word_div_cost: 32,
+            compute_meter: Rc::new(RefCell::new(MockComputeMeter { remaining: 200_u64 })),
+            loader_id: &bpf_loader::id(),
+        };
+        let mut syscall_bn_mod_sqr = SyscallBigNumModSqr {
+            cost: 1,
+            word_cost: 6,
+            word_div_cost: 32,
+            compute_meter: Rc::new(RefCell::new(MockComputeMeter { remaining: 200_u64 })),
+            loader_id: &bpf_loader::id(),
+        };
+        let mut syscall_bn_mod_inv = SyscallBigNumModInv {
+            cost: 1,
+            word_cost: 6,
+            word_div_cost: 32,
+            compute_meter: Rc::new(RefCell::new(MockComputeMeter { remaining: 200_u64 })),
+            loader_id: &bpf_loader::id(),
+        };
+        assert!(invoke_bignum_two_arg_calls(8, 2, &mut syscall_bn_exp).is_ok());
+        assert!(invoke_bignum_two_arg_calls(11, 7, &mut syscall_bn_mod_sqr).is_ok());
+        assert!(invoke_bignum_two_arg_calls(415, 77, &mut syscall_bn_mod_inv).is_ok());
+    }
+
+    #[test]
+    fn test_syscall_bignum_complex_math2() {
+        let mut syscall_bn_mod_exp = SyscallBigNumModExp {
+            cost: 1,
+            compute_meter: Rc::new(RefCell::new(MockComputeMeter { remaining: 200_u64 })),
+            loader_id: &bpf_loader::id(),
+        };
+        let mut syscall_bn_mod_mul = SyscallBigNumModMul {
+            cost: 1,
+            word_cost: 6,
+            word_div_cost: 32,
+            compute_meter: Rc::new(RefCell::new(MockComputeMeter { remaining: 200_u64 })),
+            loader_id: &bpf_loader::id(),
+        };
+        assert!(invoke_bignum_three_arg_calls(300, 11, 7, &mut syscall_bn_mod_exp).is_ok());
+        assert!(invoke_bignum_three_arg_calls(300, 11, 7, &mut syscall_bn_mod_mul).is_ok());
+    }
+
+    #[test]
+    fn test_syscall_bignum_sqr() {
+        let (bn_arg1, bn1_is_negative) = new_u32_bignum(300);
+        let bn1_len = bn_arg1.len();
+
+        // Setup Ffi
+        let rhs_in_ffi = FfiBigNumber {
+            data: 1024u64,
+            data_len: bn1_len as u64,
+            is_negative: bn1_is_negative,
+        };
+        let mut result_vec = Vec::<u8>::with_capacity(bn1_len * 2);
+        let mut sol_out_ffi = FfiBigNumber {
+            data: 4096u64,
+            data_len: result_vec.capacity() as u64,
+            is_negative: false,
+        };
+        let memory_mapping = MemoryMapping::new::<UserError>(
+            vec![
+                MemoryRegion {
+                    host_addr: &rhs_in_ffi as *const _ as u64,
+                    vm_addr: 24,
+                    len: std::mem::size_of::<FfiBigNumber>() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: bn_arg1.as_ptr() as *const _ as u64,
+                    vm_addr: 1024,
+                    len: bn1_len as u64,
+                    vm_gap_shift: 63,
+                    is_writable: false,
+                },
+                MemoryRegion {
+                    host_addr: &mut sol_out_ffi as *mut _ as u64,
+                    vm_addr: 72,
+                    len: std::mem::size_of::<FfiBigNumber>() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+                MemoryRegion {
+                    host_addr: result_vec.as_mut_ptr() as *mut _ as u64,
+                    vm_addr: 4096,
+                    len: result_vec.capacity() as u64,
+                    vm_gap_shift: 63,
+                    is_writable: true,
+                },
+            ],
+            &DEFAULT_CONFIG,
+        )
+        .unwrap();
+
+        let compute_meter: Rc<RefCell<dyn ComputeMeter>> =
+            Rc::new(RefCell::new(MockComputeMeter {
+                remaining: (20 + 20) as u64,
+            }));
+        let mut syscall = SyscallBigNumSqr {
+            cost: 1,
+            word_cost: 6,
+            word_div_cost: 32,
+            compute_meter,
+            loader_id: &bpf_loader::id(),
+        };
+        let mut result: Result<u64, EbpfError<BpfError>> = Ok(0);
+        syscall.call(24, 72, 0, 8, 16, &memory_mapping, &mut result);
+        result.unwrap();
+        unsafe { result_vec.set_len(sol_out_ffi.data_len as usize) };
+        assert_eq!(result_vec, vec![1, 95, 144]);
+    }
+    #[test]
+    fn test_valid_big_endian() {
+        let be_bytes_in = u32::to_be_bytes(256);
+        let bn_bytes_out = BigNum::from_slice(&be_bytes_in).unwrap().to_vec();
+        assert_eq!(bn_bytes_out, [1, 0]);
+
+        let be_bytes_in: Vec<u8> = vec![0, 0, 0, 0, 0, 0, 1, 0];
+        let bn_bytes_out = BigNum::from_slice(&be_bytes_in).unwrap().to_vec();
+        assert_eq!(bn_bytes_out, [1, 0]);
     }
 }

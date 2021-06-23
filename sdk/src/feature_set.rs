@@ -134,6 +134,9 @@ pub mod stake_program_v4 {
 pub mod memory_ops_syscalls {
     solana_sdk::declare_id!("ENQi37wsVhTvFz2gUiZAAbqFEWGN2jwFsqdEDTE8A4MU");
 }
+pub mod bignum_syscall_enabled {
+    solana_sdk::declare_id!("BM3LiLruWMHeSJpoN1mgEzpxfKs9f7k8FvSMbgNBqN1E");
+}
 
 pub mod add_missing_program_error_mappings {
     solana_sdk::declare_id!("3QEUpjhgPEt92nz3Mqf6pABkHPGCQwSvKtyGMq4SuQyL");
@@ -189,6 +192,7 @@ lazy_static! {
         (system_transfer_zero_check::id(), "perform all checks for transfers of 0 lamports"),
         (blake3_syscall_enabled::id(), "blake3 syscall"),
         (dedupe_config_program_signers::id(), "dedupe config program signers"),
+        (bignum_syscall_enabled::id(), "bignum syscall"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

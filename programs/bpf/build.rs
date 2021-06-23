@@ -60,6 +60,7 @@ fn main() {
         let rust_programs = [
             "128bit",
             "alloc",
+            "bignumber",
             "call_depth",
             "caller_access",
             "custom_heap",
