@@ -101,12 +101,57 @@ To sign an account with program derived addresses, a program may
 `invoke_signed()`.
 
 ```rust,ignore
-        invoke_signed(
-            &instruction,
-            accounts,
-            &[&["First addresses seed"],
-              &["Second addresses first seed", "Second addresses second seed"]],
-        )?;
+invoke_signed(
+    &instruction,
+    accounts,
+    &[&["First addresses seed"],
+      &["Second addresses first seed", "Second addresses second seed"]],
+)?;
+```
+
+### Limiting the compute units a cross-program invocation can consume
+
+Programs can limit the compute budget available to the invocation via the
+`invoke_with_budget` and `invoke_signed_with_budget` calls.
+If the invocation fails to complete or fully consumes its compute budget,
+`invoke_with_budget` and `invoke_signed_with_budget` will return an error
+`ProgramError::ComputationalBudgetExceeded`. This error can then be handled by
+the caller.
+
+```rust, ignore
+let ret = invoke_signed_with_budget(
+    &instruction,
+    25_000, // set the compute budget for the instruction to be 25,000
+    accounts,
+    &[&["seed"]],
+);
+if let Err(ProgramError::ComputationalBudgetExceeded) = ret {
+    msg!("inner CPI failed to complete");
+} else {
+    ret?;
+}
+```
+
+### Advanced: handling errors and rolling back invocations
+To protect developers from unintended consequences, `invoke`, `invoke_signed`,
+`invoke_with_budget` and `invoke_signed_with_budget` will all fail unrecoverably
+if the invocation throws an error.
+
+However, users who would like to continue execution after recovering from an
+error can utilise the `invoke_with_rollback` method, which rolls back any
+account changes made by the invocation, but allows all account changes made
+prior to the invocation to persist.
+
+```rust, ignore
+let ret = invoke_with_rollback(
+    &instruction,
+    Some(25_000), // set the compute budget for the instruction to be 25,000
+    accounts,
+    &[&["seed"]],
+);
+if let Err(InvokeError(ProgramError::Custom(inner_program::Error::ThisError))) = ret {
+  msg!("inner program failed with ThisError!");
+}
 ```
 
 ### Call Depth

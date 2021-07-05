@@ -59,6 +59,7 @@ members = [
     "rust/invoke_and_error",
     "rust/invoke_and_ok",
     "rust/invoke_and_return",
+    "rust/invoke_with_rollback",
     "rust/invoked",
     "rust/iter",
     "rust/many_args",

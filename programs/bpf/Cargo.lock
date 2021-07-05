@@ -1371,6 +1371,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "invoke-with-rollback"
+version = "1.8.0"
+dependencies = [
+ "solana-program 1.8.0",
+ "solana-program-test",
+ "solana-sdk",
+]
+
+[[package]]
 name = "iovec"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"

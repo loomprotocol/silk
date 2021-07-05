@@ -47,8 +47,21 @@ pub enum ProgramError {
     UnsupportedSysvar,
     #[error("Provided owner is not allowed")]
     IllegalOwner,
+    #[error("Computational Budget Exceeded")]
+    ComputationalBudgetExceeded,
+    #[error("Program failed to complete")]
+    ProgramFailedToComplete,
 }
-
+// this is required to prevent error pollution across multiple invocations
+pub struct InvokeError(pub ProgramError);
+impl From<InvokeError> for ProgramError {
+    fn from(e: InvokeError) -> Self {
+        match e.0 {
+            ProgramError::Custom(_) => ProgramError::ProgramFailedToComplete,
+            err => err,
+        }
+    }
+}
 pub trait PrintProgramError {
     fn print<E>(&self)
     where
@@ -85,6 +98,8 @@ impl PrintProgramError for ProgramError {
             Self::AccountNotRentExempt => msg!("Error: AccountNotRentExempt"),
             Self::UnsupportedSysvar => msg!("Error: UnsupportedSysvar"),
             Self::IllegalOwner => msg!("Error: IllegalOwner"),
+            Self::ComputationalBudgetExceeded => msg!("Error: ComputationalBudgetExceeded"),
+            Self::ProgramFailedToComplete => msg!("Error: ProgramFailedToComplete"),
         }
     }
 }
@@ -115,6 +130,8 @@ pub const BORSH_IO_ERROR: u64 = to_builtin!(15);
 pub const ACCOUNT_NOT_RENT_EXEMPT: u64 = to_builtin!(16);
 pub const UNSUPPORTED_SYSVAR: u64 = to_builtin!(17);
 pub const ILLEGAL_OWNER: u64 = to_builtin!(18);
+pub const COMPUTATIONAL_BUDGET_EXCEEDED: u64 = to_builtin!(19);
+pub const PROGRAM_FAILED_TO_COMPLETE: u64 = to_builtin!(20);
 // Warning: Any new program errors added here must also be:
 // - Added to the below conversions
 // - Added as an equivilent to InstructionError
@@ -141,6 +158,8 @@ impl From<ProgramError> for u64 {
             ProgramError::AccountNotRentExempt => ACCOUNT_NOT_RENT_EXEMPT,
             ProgramError::UnsupportedSysvar => UNSUPPORTED_SYSVAR,
             ProgramError::IllegalOwner => ILLEGAL_OWNER,
+            ProgramError::ComputationalBudgetExceeded => COMPUTATIONAL_BUDGET_EXCEEDED,
+            ProgramError::ProgramFailedToComplete => PROGRAM_FAILED_TO_COMPLETE,
             ProgramError::Custom(error) => {
                 if error == 0 {
                     CUSTOM_ZERO
@@ -173,6 +192,8 @@ impl From<u64> for ProgramError {
             ACCOUNT_NOT_RENT_EXEMPT => Self::AccountNotRentExempt,
             UNSUPPORTED_SYSVAR => Self::UnsupportedSysvar,
             ILLEGAL_OWNER => Self::IllegalOwner,
+            COMPUTATIONAL_BUDGET_EXCEEDED => Self::ComputationalBudgetExceeded,
+            PROGRAM_FAILED_TO_COMPLETE => Self::ProgramFailedToComplete,
             _ => Self::Custom(error as u32),
         }
     }
@@ -201,6 +222,9 @@ impl TryFrom<InstructionError> for ProgramError {
             Self::Error::AccountNotRentExempt => Ok(Self::AccountNotRentExempt),
             Self::Error::UnsupportedSysvar => Ok(Self::UnsupportedSysvar),
             Self::Error::IllegalOwner => Ok(Self::IllegalOwner),
+            Self::Error::ComputationalBudgetExceeded => Ok(Self::ComputationalBudgetExceeded),
+
+            Self::Error::ProgramFailedToComplete => Ok(Self::ProgramFailedToComplete),
             _ => Err(error),
         }
     }
@@ -231,6 +255,8 @@ where
             ACCOUNT_NOT_RENT_EXEMPT => Self::AccountNotRentExempt,
             UNSUPPORTED_SYSVAR => Self::UnsupportedSysvar,
             ILLEGAL_OWNER => Self::IllegalOwner,
+            COMPUTATIONAL_BUDGET_EXCEEDED => Self::ComputationalBudgetExceeded,
+            PROGRAM_FAILED_TO_COMPLETE => Self::ProgramFailedToComplete,
             _ => {
                 // A valid custom error has no bits set in the upper 32
                 if error >> BUILTIN_BIT_SHIFT == 0 {

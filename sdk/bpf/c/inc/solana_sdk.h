@@ -485,6 +485,15 @@ typedef struct {
 } SolAccountMeta;
 
 /**
+ * InstructionWithOptions
+ */
+typedef struct {
+  uint64_t instruction_addr; /** Addr of the instruction */
+  uint64_t budget; /** Compute Unit Budget for the Instruction **/
+  bool throw_unrecoverable_error; /** Whether the instruction's execution context throws an unrecoverable error on failure **/
+} SolInstructionWithOptions;
+
+/**
  * Instruction
  */
 typedef struct {
@@ -599,6 +608,102 @@ static uint64_t sol_invoke(
   const SolSignerSeeds signers_seeds[] = {{}};
   return sol_invoke_signed(
     instruction,
+    account_infos,
+    account_infos_len,
+    signers_seeds,
+    0
+  );
+}
+
+/**
+ * Budgeted cross-program invocation
+ *  * @{
+ */
+
+/**
+ * Internal cross-program invocation function
+ */
+uint64_t sol_invoke_signed_with_options_c(
+  const SolInstructionWithOptions *instruction_with_options,
+  const SolAccountInfo *account_infos,
+  int account_infos_len,
+  const SolSignerSeeds *signers_seeds,
+  int signers_seeds_len
+);
+
+/**
+ * Invoke another program and sign for some of the keys
+ *
+ * @param instruction Instruction to process
+ * @param budget Budgeted compute units for the CPI call. Set to UINT64_MAX if no limit desired.
+ * @param account_infos Accounts used by instruction
+ * @param account_infos_len Length of account_infos array
+ * @param seeds Seed bytes used to sign program accounts
+ * @param seeds_len Length of the seeds array
+ */
+static uint64_t sol_invoke_with_rollback(
+    const SolInstruction *instruction,
+    int budget,
+    const SolAccountInfo *account_infos,
+    int account_infos_len,
+    const SolSignerSeeds *signers_seeds,
+    int signers_seeds_len
+) {
+  const SolInstructionWithOptions instruction_with_options = { (uint64_t)instruction, (uint64_t)budget, false };
+  return sol_invoke_signed_with_options_c(
+    &instruction_with_options,
+    account_infos,
+    account_infos_len,
+    signers_seeds,
+    signers_seeds_len
+  );
+}
+
+/**
+ * Invoke another program and sign for some of the keys
+ *
+ * @param instruction Instruction to process
+ * @param budget Budgeted compute units for the CPI call
+ * @param account_infos Accounts used by instruction
+ * @param account_infos_len Length of account_infos array
+ * @param seeds Seed bytes used to sign program accounts
+ * @param seeds_len Length of the seeds array
+ */
+static uint64_t sol_invoke_signed_with_budget(
+    const SolInstruction *instruction,
+    int budget,
+    const SolAccountInfo *account_infos,
+    int account_infos_len,
+    const SolSignerSeeds *signers_seeds,
+    int signers_seeds_len
+) {
+  const SolInstructionWithOptions instruction_with_options = { (uint64_t)instruction, (uint64_t)budget, true };
+  return sol_invoke_signed_with_options_c(
+    &instruction_with_options,
+    account_infos,
+    account_infos_len,
+    signers_seeds,
+    signers_seeds_len
+  );
+}
+/**
+ * Invoke another program
+ *
+ * @param instruction Instruction to process
+ * @param budget Budgeted compute units for the CPI call
+ * @param account_infos Accounts used by instruction
+ * @param account_infos_len Length of account_infos array
+*/
+static uint64_t sol_invoke_with_budget(
+    const SolInstruction *instruction,
+    int budget,
+    const SolAccountInfo *account_infos,
+    int account_infos_len
+) {
+  const SolSignerSeeds signers_seeds[] = {{}};
+  return sol_invoke_signed_with_budget(
+    instruction,
+    budget,
     account_infos,
     account_infos_len,
     signers_seeds,

@@ -249,6 +249,14 @@ pub struct Instruction {
     pub data: Vec<u8>,
 }
 
+#[derive(Debug, PartialEq, Clone)]
+pub struct InstructionWithOptions {
+    pub instruction_addr: u64,
+    /// Compute units allocated to executing this instruction along with any CPI overhead.
+    pub budget: u64,
+    pub throw_unrecoverable_error: bool,
+}
+
 impl Instruction {
     #[deprecated(
         since = "1.6.0",

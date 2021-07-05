@@ -31,7 +31,10 @@ use solana_sdk::{
     bpf_loader_upgradeable::{self, UpgradeableLoaderState},
     clock::Clock,
     entrypoint::SUCCESS,
-    feature_set::{add_missing_program_error_mappings, upgradeable_close_instruction},
+    feature_set::{
+        add_missing_program_error_mappings, expanded_compute_unit_syscalls,
+        upgradeable_close_instruction,
+    },
     ic_logger_msg, ic_msg,
     instruction::InstructionError,
     keyed_account::{from_keyed_account, keyed_account_at_index},
@@ -749,6 +752,8 @@ impl Executor for BpfExecutor {
         invoke_context: &mut dyn InvokeContext,
         use_jit: bool,
     ) -> Result<(), InstructionError> {
+        let expanded_compute_unit_syscalls =
+            invoke_context.is_feature_active(&expanded_compute_unit_syscalls::id());
         let logger = invoke_context.get_logger();
         let invoke_depth = invoke_context.invoke_depth();
         let add_missing_program_error_mappings =
@@ -825,7 +830,16 @@ impl Executor for BpfExecutor {
                         )) => error,
                         err => {
                             ic_logger_msg!(logger, "Program failed to complete: {}", err);
-                            InstructionError::ProgramFailedToComplete
+                            match err {
+                                EbpfError::ExceededMaxInstructions(..) => {
+                                    if expanded_compute_unit_syscalls {
+                                        InstructionError::ComputationalBudgetExceeded
+                                    } else {
+                                        InstructionError::ProgramFailedToComplete
+                                    }
+                                }
+                                _ => InstructionError::ProgramFailedToComplete,
+                            }
                         }
                     };
                     stable_log::program_failure(&logger, program_id, &error);
@@ -1134,7 +1148,7 @@ mod tests {
             sysvars: vec![],
         };
         assert_eq!(
-            Err(InstructionError::ProgramFailedToComplete),
+            Err(InstructionError::ComputationalBudgetExceeded),
             process_instruction(&program_key, &[], &mut invoke_context)
         );
     }

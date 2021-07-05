@@ -1,0 +1,22 @@
+[package]
+name = "invoke-with-rollback"
+version = "1.8.0"
+description = "Solana BPF test program written in Rust"
+authors = ["Solana Maintainers <maintainers@solana.foundation>"]
+license = "Apache-2.0"
+homepage = "https://solana.com/"
+documentation = "https://docs.rs/solana-bpf-rust-error-handling"
+edition = "2018"
+
+[dependencies]
+solana-program = { path = "../../../../sdk/program", version = "=1.8.0" }
+
+[dev-dependencies]
+solana-program-test = { path = "../../../../program-test", version = "=1.8.0" }
+solana-sdk =  { path = "../../../../sdk", version = "=1.8.0" }
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[package.metadata.docs.rs]
+targets = ["x86_64-unknown-linux-gnu"]

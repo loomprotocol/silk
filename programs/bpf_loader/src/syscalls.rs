@@ -8,7 +8,7 @@ use solana_rbpf::{
     question_mark,
     vm::{EbpfVm, SyscallObject, SyscallRegistry},
 };
-use solana_runtime::message_processor::MessageProcessor;
+use solana_runtime::message_processor::{MessageProcessor, ThisComputeMeter};
 use solana_sdk::{
     account::{Account, AccountSharedData, ReadableAccount},
     account_info::AccountInfo,
@@ -20,16 +20,17 @@ use solana_sdk::{
     epoch_schedule::EpochSchedule,
     feature_set::{
         blake3_syscall_enabled, cpi_data_cost, demote_sysvar_write_locks,
-        enforce_aligned_host_addrs, keccak256_syscall_enabled, memory_ops_syscalls,
-        sysvar_via_syscall, update_data_on_realloc,
+        enforce_aligned_host_addrs, expanded_compute_unit_syscalls, keccak256_syscall_enabled,
+        memory_ops_syscalls, sysvar_via_syscall, update_data_on_realloc,
     },
     hash::{Hasher, HASH_BYTES},
     ic_msg,
-    instruction::{AccountMeta, Instruction, InstructionError},
+    instruction::{AccountMeta, Instruction, InstructionError, InstructionWithOptions},
     keccak,
     keyed_account::KeyedAccount,
     native_loader,
     process_instruction::{self, stable_log, ComputeMeter, InvokeContext, Logger},
+    program_error::ProgramError,
     pubkey::{Pubkey, PubkeyError, MAX_SEEDS},
     rent::Rent,
     sysvar::{self, fees::Fees, Sysvar, SysvarId},
@@ -37,6 +38,7 @@ use solana_sdk::{
 use std::{
     alloc::Layout,
     cell::{Ref, RefCell, RefMut},
+    convert::TryInto,
     mem::{align_of, size_of},
     rc::Rc,
     slice::from_raw_parts_mut,
@@ -164,6 +166,17 @@ pub fn register_syscalls(
     syscall_registry
         .register_syscall_by_name(b"sol_invoke_signed_rust", SyscallInvokeSignedRust::call)?;
 
+    // Budgeted versions of cross-program invocation syscalls
+    syscall_registry.register_syscall_by_name(
+        b"sol_invoke_signed_with_options_rust",
+        SyscallInvokeSignedWithOptionsRust::call,
+    )?;
+
+    syscall_registry.register_syscall_by_name(
+        b"sol_invoke_signed_with_options_c",
+        SyscallInvokeSignedWithOptionsC::call,
+    )?;
+
     // Memory allocator
     syscall_registry.register_syscall_by_name(b"sol_alloc_free_", SyscallAllocFree::call)?;
 
@@ -192,6 +205,8 @@ pub fn bind_syscall_context_objects<'a>(
     let bpf_compute_budget = invoke_context.get_bpf_compute_budget();
     let enforce_aligned_host_addrs =
         invoke_context.is_feature_active(&enforce_aligned_host_addrs::id());
+    let expanded_compute_unit_syscalls =
+        invoke_context.is_feature_active(&expanded_compute_unit_syscalls::id());
 
     // Syscall functions common across languages
 
@@ -383,6 +398,24 @@ pub fn bind_syscall_context_objects<'a>(
         }),
         None,
     )?;
+
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        expanded_compute_unit_syscalls,
+        Box::new(SyscallInvokeSignedWithOptionsRust {
+            invoke_context: invoke_context.clone(),
+            loader_id,
+        }),
+    );
+
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        expanded_compute_unit_syscalls,
+        Box::new(SyscallInvokeSignedWithOptionsC {
+            invoke_context: invoke_context.clone(),
+            loader_id,
+        }),
+    );
 
     // Memory allocator
     vm.bind_syscall_context_object(
@@ -1403,7 +1436,6 @@ impl<'a> SyscallObject<BpfError> for SyscallBlake3<'a> {
 }
 
 // Cross-program invocation syscalls
-
 struct AccountReferences<'a> {
     lamports: &'a mut u64,
     owner: &'a mut Pubkey,
@@ -1423,6 +1455,7 @@ type TranslatedAccounts<'a> = (
 
 /// Implemented by language specific data structure translators
 trait SyscallInvokeSigned<'a> {
+    fn get_loader_id(&self) -> &'a Pubkey;
     fn get_context_mut(&self) -> Result<RefMut<&'a mut dyn InvokeContext>, EbpfError<BpfError>>;
     fn get_context(&self) -> Result<Ref<&'a mut dyn InvokeContext>, EbpfError<BpfError>>;
     fn translate_instruction(
@@ -1449,12 +1482,133 @@ trait SyscallInvokeSigned<'a> {
     ) -> Result<Vec<Pubkey>, EbpfError<BpfError>>;
 }
 
+/// Budgeted version of cross-program invocation called from Rust
+pub struct SyscallInvokeSignedWithOptionsRust<'a> {
+    invoke_context: Rc<RefCell<&'a mut dyn InvokeContext>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallInvokeSignedWithOptionsRust<'a> {
+    fn call(
+        &mut self,
+        instruction_with_options_addr: u64,
+        account_infos_addr: u64,
+        account_infos_len: u64,
+        signers_seeds_addr: u64,
+        signers_seeds_len: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        *result = call_with_options(
+            &mut SyscallInvokeSignedRust {
+                invoke_context: self.invoke_context.clone(),
+                loader_id: self.loader_id,
+            },
+            instruction_with_options_addr,
+            account_infos_addr,
+            account_infos_len,
+            signers_seeds_addr,
+            signers_seeds_len,
+            memory_mapping,
+        );
+    }
+}
+
+/// Budgeted version of cross-program invocation called from Rust
+pub struct SyscallInvokeSignedWithOptionsC<'a> {
+    invoke_context: Rc<RefCell<&'a mut dyn InvokeContext>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallInvokeSignedWithOptionsC<'a> {
+    fn call(
+        &mut self,
+        instruction_with_options_addr: u64,
+        account_infos_addr: u64,
+        account_infos_len: u64,
+        signers_seeds_addr: u64,
+        signers_seeds_len: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        *result = call_with_options(
+            &mut SyscallInvokeSignedC {
+                invoke_context: self.invoke_context.clone(),
+                loader_id: self.loader_id,
+            },
+            instruction_with_options_addr,
+            account_infos_addr,
+            account_infos_len,
+            signers_seeds_addr,
+            signers_seeds_len,
+            memory_mapping,
+        );
+    }
+}
+
+fn call_with_options<'a>(
+    inner_invoke_syscall: &mut dyn SyscallInvokeSigned<'a>,
+    instruction_with_options_addr: u64,
+    account_infos_addr: u64,
+    account_infos_len: u64,
+    signers_seeds_addr: u64,
+    signers_seeds_len: u64,
+    memory_mapping: &MemoryMapping,
+) -> Result<u64, EbpfError<BpfError>> {
+    let mut invoke_context = inner_invoke_syscall.get_context_mut()?;
+    invoke_context.get_compute_meter().consume(
+        invoke_context
+            .get_bpf_compute_budget()
+            .budgeted_invoke_context_units,
+    )?;
+    let enforce_aligned_host_addrs =
+        invoke_context.is_feature_active(&enforce_aligned_host_addrs::id());
+
+    let opt_ix = translate_type::<InstructionWithOptions>(
+        memory_mapping,
+        instruction_with_options_addr,
+        inner_invoke_syscall.get_loader_id(),
+        enforce_aligned_host_addrs,
+    )?;
+    let ix_addr = opt_ix.instruction_addr;
+    let mut outer_compute_meter = invoke_context.get_compute_meter();
+    let outer_remaining = outer_compute_meter.borrow().get_remaining();
+
+    // The budget passed to the inner CPI call should be the min of the
+    // caller's desired budget, and its actual available budget.
+    let inner_compute_budget = opt_ix.budget.min(outer_remaining);
+
+    let inner_compute_meter = Rc::new(RefCell::new(ThisComputeMeter::new(inner_compute_budget)));
+    invoke_context.replace_compute_meter(inner_compute_meter.clone());
+    drop(invoke_context);
+    let ret = match call(
+        inner_invoke_syscall,
+        opt_ix.throw_unrecoverable_error,
+        ix_addr,
+        account_infos_addr,
+        account_infos_len,
+        signers_seeds_addr,
+        signers_seeds_len,
+        memory_mapping,
+    ) {
+        Err(EbpfError::UserError(BpfError::SyscallError(SyscallError::InstructionError(
+            InstructionError::ComputationalBudgetExceeded,
+        )))) => Ok(ProgramError::ComputationalBudgetExceeded.into()),
+        ret => ret,
+    };
+    outer_compute_meter
+        .consume(inner_compute_budget - inner_compute_meter.borrow().get_remaining())?;
+    let mut invoke_context = inner_invoke_syscall.get_context_mut()?;
+    invoke_context.replace_compute_meter(outer_compute_meter);
+    ret
+}
 /// Cross-program invocation called from Rust
 pub struct SyscallInvokeSignedRust<'a> {
     invoke_context: Rc<RefCell<&'a mut dyn InvokeContext>>,
     loader_id: &'a Pubkey,
 }
 impl<'a> SyscallInvokeSigned<'a> for SyscallInvokeSignedRust<'a> {
+    fn get_loader_id(&self) -> &'a Pubkey {
+        self.loader_id
+    }
     fn get_context_mut(&self) -> Result<RefMut<&'a mut dyn InvokeContext>, EbpfError<BpfError>> {
         self.invoke_context
             .try_borrow_mut()
@@ -1708,6 +1862,7 @@ impl<'a> SyscallObject<BpfError> for SyscallInvokeSignedRust<'a> {
     ) {
         *result = call(
             self,
+            true,
             instruction_addr,
             account_infos_addr,
             account_infos_len,
@@ -1770,6 +1925,9 @@ pub struct SyscallInvokeSignedC<'a> {
     loader_id: &'a Pubkey,
 }
 impl<'a> SyscallInvokeSigned<'a> for SyscallInvokeSignedC<'a> {
+    fn get_loader_id(&self) -> &'a Pubkey {
+        self.loader_id
+    }
     fn get_context_mut(&self) -> Result<RefMut<&'a mut dyn InvokeContext>, EbpfError<BpfError>> {
         self.invoke_context
             .try_borrow_mut()
@@ -2027,6 +2185,7 @@ impl<'a> SyscallObject<BpfError> for SyscallInvokeSignedC<'a> {
     ) {
         *result = call(
             self,
+            true,
             instruction_addr,
             account_infos_addr,
             account_infos_len,
@@ -2180,6 +2339,7 @@ fn get_upgradeable_executable(
 /// Call process instruction, common to both Rust and C
 fn call<'a>(
     syscall: &mut dyn SyscallInvokeSigned<'a>,
+    throw_unrecoverable_error: bool,
     instruction_addr: u64,
     account_infos_addr: u64,
     account_infos_len: u64,
@@ -2300,7 +2460,14 @@ fn call<'a>(
     ) {
         Ok(()) => (),
         Err(err) => {
-            return Err(SyscallError::InstructionError(err).into());
+            if throw_unrecoverable_error {
+                return Err(SyscallError::InstructionError(err).into());
+            } else {
+                let prog_err: ProgramError = err
+                    .try_into()
+                    .unwrap_or(ProgramError::ProgramFailedToComplete);
+                return Ok(prog_err.into());
+            }
         }
     }
 
