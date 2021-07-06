@@ -20,8 +20,8 @@ use solana_sdk::{
     epoch_schedule::EpochSchedule,
     feature_set::{
         blake3_syscall_enabled, cpi_data_cost, demote_sysvar_write_locks,
-        enforce_aligned_host_addrs, keccak256_syscall_enabled, memory_ops_syscalls,
-        sysvar_via_syscall, update_data_on_realloc,
+        enforce_aligned_host_addrs, expanded_compute_unit_syscalls, keccak256_syscall_enabled,
+        memory_ops_syscalls, sysvar_via_syscall, update_data_on_realloc,
     },
     hash::{Hasher, HASH_BYTES},
     ic_msg,
@@ -120,6 +120,10 @@ pub fn register_syscalls(
     syscall_registry.register_syscall_by_name(b"sol_log_pubkey", SyscallLogPubkey::call)?;
 
     syscall_registry.register_syscall_by_name(
+        b"sol_remaining_compute_units_",
+        SyscallRemainingBpfComputeUnits::call,
+    )?;
+    syscall_registry.register_syscall_by_name(
         b"sol_create_program_address",
         SyscallCreateProgramAddress::call,
     )?;
@@ -192,6 +196,8 @@ pub fn bind_syscall_context_objects<'a>(
     let bpf_compute_budget = invoke_context.get_bpf_compute_budget();
     let enforce_aligned_host_addrs =
         invoke_context.is_feature_active(&enforce_aligned_host_addrs::id());
+    let expanded_compute_unit_syscalls =
+        invoke_context.is_feature_active(&expanded_compute_unit_syscalls::id());
 
     // Syscall functions common across languages
 
@@ -224,7 +230,11 @@ pub fn bind_syscall_context_objects<'a>(
 
     vm.bind_syscall_context_object(
         Box::new(SyscallLogBpfComputeUnits {
-            cost: 0,
+            cost: if expanded_compute_unit_syscalls {
+                bpf_compute_budget.log_compute_units_cost
+            } else {
+                0
+            },
             compute_meter: invoke_context.get_compute_meter(),
             logger: invoke_context.get_logger(),
         }),
@@ -241,6 +251,15 @@ pub fn bind_syscall_context_objects<'a>(
         }),
         None,
     )?;
+    bind_feature_gated_syscall_context_object!(
+        vm,
+        expanded_compute_unit_syscalls,
+        Box::new(SyscallRemainingBpfComputeUnits {
+            cost: bpf_compute_budget.get_compute_units_cost,
+            compute_meter: invoke_context.get_compute_meter(),
+            loader_id,
+        }),
+    );
 
     vm.bind_syscall_context_object(
         Box::new(SyscallCreateProgramAddress {
@@ -669,8 +688,7 @@ impl SyscallObject<BpfError> for SyscallLogU64 {
         *result = Ok(0);
     }
 }
-
-/// Log current compute consumption
+/// Log the remaining compute units a program may consume
 pub struct SyscallLogBpfComputeUnits {
     cost: u64,
     compute_meter: Rc<RefCell<dyn ComputeMeter>>,
@@ -737,7 +755,32 @@ impl<'a> SyscallObject<BpfError> for SyscallLogPubkey<'a> {
         *result = Ok(0);
     }
 }
-
+/// Return the remaining compute units a program may consume
+pub struct SyscallRemainingBpfComputeUnits<'a> {
+    cost: u64,
+    compute_meter: Rc<RefCell<dyn ComputeMeter>>,
+    loader_id: &'a Pubkey,
+}
+impl<'a> SyscallObject<BpfError> for SyscallRemainingBpfComputeUnits<'a> {
+    fn call(
+        &mut self,
+        result_addr: u64,
+        _arg2: u64,
+        _arg3: u64,
+        _arg4: u64,
+        _arg5: u64,
+        memory_mapping: &MemoryMapping,
+        result: &mut Result<u64, EbpfError<BpfError>>,
+    ) {
+        question_mark!(self.compute_meter.consume(self.cost), result);
+        let compute_units_remaining = question_mark!(
+            translate_type_mut::<u64>(memory_mapping, result_addr, self.loader_id, true),
+            result
+        );
+        *compute_units_remaining = self.compute_meter.borrow().get_remaining();
+        *result = Ok(0);
+    }
+}
 /// Dynamic memory allocation syscall called when the BPF program calls
 /// `sol_alloc_free_()`.  The allocator is expected to allocate/free
 /// from/to a given chunk of memory and enforce size restrictions.  The

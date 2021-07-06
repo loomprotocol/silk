@@ -374,6 +374,8 @@ fn custom_panic(info: &core::panic::PanicInfo<'_>) {
 
 ## Compute Budget
 
+Use the system call [`sol_remaining_compute_units`](invalid_link) to return a `u64` indicating the compute units remaining for the program to consume.
+
 Use the system call
 [`sol_log_compute_units()`](https://github.com/solana-labs/solana/blob/d3a3a7548c857f26ec2cb10e270da72d373020ec/sdk/program/src/log.rs#L102)
 to log a message containing the remaining number of compute units the program

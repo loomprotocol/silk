@@ -181,6 +181,12 @@ pub struct BpfComputeBudget {
     pub cpi_bytes_per_unit: u64,
     /// Base number of compute units consumed to get a sysvar
     pub sysvar_base_cost: u64,
+    /// Number of compute units consumed to return the remaining compute units in the
+    /// ComputeMeter to the program
+    pub get_compute_units_cost: u64,
+    /// Number of compute units consumed to log the remaining compute units in the
+    /// ComputerMeter
+    pub log_compute_units_cost: u64,
 }
 impl Default for BpfComputeBudget {
     fn default() -> Self {
@@ -204,6 +210,8 @@ impl BpfComputeBudget {
             max_cpi_instruction_size: 1280, // IPv6 Min MTU size
             cpi_bytes_per_unit: 250,        // ~50MB at 200,000 units
             sysvar_base_cost: 100,
+            get_compute_units_cost: 20,
+            log_compute_units_cost: 100,
         }
     }
 }

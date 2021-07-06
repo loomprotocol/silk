@@ -26,6 +26,9 @@ pub trait SyscallStubs: Sync + Send {
     fn sol_log_compute_units(&self) {
         sol_log("SyscallStubs: sol_log_compute_units() not available");
     }
+    fn sol_remaining_compute_units(&self, _var: &mut u64) {
+        sol_log("SyscallStubs: sol_remaining_compute_units() defaulting to u64::MAX");
+    }
     fn sol_invoke_signed(
         &self,
         _instruction: &Instruction,
@@ -98,6 +101,13 @@ pub(crate) fn sol_log_64(arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64) 
 
 pub(crate) fn sol_log_compute_units() {
     SYSCALL_STUBS.read().unwrap().sol_log_compute_units();
+}
+
+pub(crate) fn sol_remaining_compute_units(var: &mut u64) {
+    SYSCALL_STUBS
+        .read()
+        .unwrap()
+        .sol_remaining_compute_units(var);
 }
 
 pub(crate) fn sol_invoke_signed(

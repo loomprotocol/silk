@@ -140,6 +140,11 @@ void sol_log_compute_units_();
 #define sol_log_compute_units() sol_log_compute_units_()
 
 /**
+ * Returns the current compute unit consumption
+ */
+uint64_t sol_remaining_compute_units_();
+#define sol_remaining_compute_units() sol_remaining_compute_units_()
+/**
  * Size of Public key in bytes
  */
 #define SIZE_PUBKEY 32
@@ -696,6 +701,9 @@ void sol_log_pubkey(const SolPubkey *pubkey) {
 }
 void sol_log_compute_units_() {
   printf("Program consumption: __ units remaining\n");
+}
+uint64_t sol_remaining_compute_units_() {
+  return UINT64_MAX;
 }
 void sol_panic_(const char *file, uint64_t len, uint64_t line, uint64_t column) {
   printf("Panic in %s at %d:%d\n", file, line, column);

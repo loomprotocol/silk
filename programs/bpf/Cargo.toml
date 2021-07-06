@@ -51,6 +51,7 @@ members = [
     "rust/dep_crate",
     "rust/deprecated_loader",
     "rust/dup_accounts",
+    "rust/early_terminate",
     "rust/error_handling",
     "rust/external_spend",
     "rust/finalize",

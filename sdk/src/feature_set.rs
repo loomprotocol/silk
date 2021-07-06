@@ -6,6 +6,11 @@ use solana_sdk::{
 };
 use std::collections::{HashMap, HashSet};
 
+pub mod expanded_compute_unit_syscalls {
+    // TODO: replace by team
+    solana_sdk::declare_id!("GH4auHBrmun5EYthnRw8sQ6JZhGWGsUJNPzuNGKEq37C");
+}
+
 pub mod instructions_sysvar_enabled {
     solana_sdk::declare_id!("EnvhHCLvg55P7PDtbvR1NwuTuAeodqpusV3MR5QEK8gs");
 }
@@ -154,6 +159,7 @@ pub mod verify_tx_signatures_len {
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
+        (expanded_compute_unit_syscalls::id(), "expanded set of compute unit-related syscalls"),
         (instructions_sysvar_enabled::id(), "instructions sysvar"),
         (secp256k1_program_enabled::id(), "secp256k1 program"),
         (consistent_recent_blockhashes_sysvar::id(), "consistent recentblockhashes sysvar"),

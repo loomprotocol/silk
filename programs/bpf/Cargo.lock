@@ -2854,6 +2854,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "solana-bpf-rust-early-terminate"
+version = "1.8.0"
+dependencies = [
+ "solana-program 1.8.0",
+]
+
+[[package]]
 name = "solana-bpf-rust-error-handling"
 version = "1.8.0"
 dependencies = [

@@ -31,6 +31,7 @@ pub mod native_token;
 pub mod nonce;
 pub mod program;
 pub mod program_error;
+pub mod program_inspection;
 pub mod program_memory;
 pub mod program_option;
 pub mod program_pack;
