@@ -107,13 +107,13 @@ impl AccountSecondaryIndexes {
 
 #[derive(Debug)]
 pub struct AccountMapEntry<T> {
-    ref_count: AtomicU64,
+    ref_count: u64,
     pub slot_list: SlotList<T>,
 }
 
 impl<T: Clone> AccountMapEntry<T> {
     pub fn ref_count(&self) -> u64 {
-        self.ref_count.load(Ordering::Relaxed)
+        self.ref_count
     }
 }
 
@@ -169,16 +169,8 @@ impl<'a, T: Clone> ReadAccountMapEntry<'a, T> {
         &self.get().slot_list
     }
 
-    pub fn ref_count(&self) -> &AtomicU64 {
-        &self.get().ref_count
-    }
-
-    pub fn unref(&self) {
-        self.ref_count().fetch_sub(1, Ordering::Relaxed);
-    }
-
-    pub fn addref(&self) {
-        self.ref_count().fetch_add(1, Ordering::Relaxed);
+    pub fn ref_count(&self) -> RefCount {
+        self.get().ref_count
     }
 }
 
@@ -266,16 +258,28 @@ impl<'a, 'b: 'a, T: 'static + Clone + IsCached> WriteAccountMapEntry<'a, 'b, T> 
         })
     }
 
-    pub fn ref_count(&self) -> &AtomicU64 {
-        &self.get().unwrap().get().ref_count
+    pub fn ref_count(&self) -> RefCount {
+        self.get().unwrap().get().ref_count
     }
 
-    pub fn unref(&self) {
-        self.ref_count().fetch_sub(1, Ordering::Relaxed);
+    pub fn unref(&mut self) {
+        self.with_mut(|fields| {
+            let f = fields.owned_entry;
+            f.0.as_mut().map(|entry| {
+                let x = entry.get_mut();
+                x.ref_count -= 1;
+            })
+        });
     }
 
-    pub fn addref(&self) {
-        self.ref_count().fetch_add(1, Ordering::Relaxed);
+    pub fn addref(&mut self) {
+        self.with_mut(|fields| {
+            let f = fields.owned_entry;
+            f.0.as_mut().map(|entry| {
+                let x = entry.get_mut();
+                x.ref_count += 1;
+            })
+        });
     }
 
     // create an entry that is equivalent to this process:
@@ -285,7 +289,7 @@ impl<'a, 'b: 'a, T: 'static + Clone + IsCached> WriteAccountMapEntry<'a, 'b, T> 
     pub fn new_entry_after_update(slot: Slot, account_info: T) -> AccountMapEntry<T> {
         let ref_count = if account_info.is_cached() { 0 } else { 1 };
         AccountMapEntry {
-            ref_count: AtomicU64::new(ref_count),
+            ref_count,
             slot_list: vec![(slot, account_info)],
         }
     }
@@ -317,7 +321,7 @@ impl<'a, 'b: 'a, T: 'static + Clone + IsCached> WriteAccountMapEntry<'a, 'b, T> 
         });
         if addref {
             // If it's the first non-cache insert, also bump the stored ref count
-            self.ref_count().fetch_add(1, Ordering::Relaxed);
+            self.addref();
         }
     }
 }
@@ -700,7 +704,7 @@ type AccountMapsReadLock<'a, T> = RwLockReadGuard<'a, MapType<T>>;
 #[derive(Debug, Default)]
 pub struct ScanSlotTracker {
     is_removed: bool,
-    ref_count: u64,
+    ref_count: RefCount,
 }
 
 impl ScanSlotTracker {
@@ -1279,7 +1283,7 @@ impl<T: 'static + Clone + IsCached + ZeroLamport + std::marker::Sync + std::mark
     ) -> (SlotList<T>, RefCount) {
         (
             self.get_rooted_entries(locked_account_entry.slot_list(), max),
-            locked_account_entry.ref_count().load(Ordering::Relaxed),
+            locked_account_entry.ref_count(),
         )
     }
 
@@ -1572,14 +1576,14 @@ impl<T: 'static + Clone + IsCached + ZeroLamport + std::marker::Sync + std::mark
     }
 
     pub fn unref_from_storage(&self, pubkey: &Pubkey) {
-        if let Some(locked_entry) = self.get_account_read_entry(pubkey) {
+        if let Some(mut locked_entry) = self.get_account_write_entry(pubkey) {
             locked_entry.unref();
         }
     }
 
     pub fn ref_count_from_storage(&self, pubkey: &Pubkey) -> RefCount {
         if let Some(locked_entry) = self.get_account_read_entry(pubkey) {
-            locked_entry.ref_count().load(Ordering::Relaxed)
+            locked_entry.ref_count()
         } else {
             0
         }
@@ -2707,7 +2711,7 @@ pub mod tests {
         let account_info = AccountInfoTest::default();
 
         let new_entry = WriteAccountMapEntry::new_entry_after_update(slot, account_info);
-        assert_eq!(new_entry.ref_count.load(Ordering::Relaxed), 0);
+        assert_eq!(new_entry.ref_count, 0);
         assert_eq!(new_entry.slot_list.capacity(), 1);
         assert_eq!(new_entry.slot_list.to_vec(), vec![(slot, account_info)]);
 
@@ -2715,7 +2719,7 @@ pub mod tests {
         let account_info = true;
 
         let new_entry = WriteAccountMapEntry::new_entry_after_update(slot, account_info);
-        assert_eq!(new_entry.ref_count.load(Ordering::Relaxed), 1);
+        assert_eq!(new_entry.ref_count, 1);
         assert_eq!(new_entry.slot_list.capacity(), 1);
         assert_eq!(new_entry.slot_list.to_vec(), vec![(slot, account_info)]);
     }
@@ -2734,7 +2738,7 @@ pub mod tests {
 
         for (i, key) in [key0, key1].iter().enumerate() {
             let entry = index.get_account_read_entry(key).unwrap();
-            assert_eq!(entry.ref_count().load(Ordering::Relaxed), 1);
+            assert_eq!(entry.ref_count(), 1);
             assert_eq!(entry.slot_list().to_vec(), vec![(slot0, account_infos[i]),]);
         }
     }
@@ -2780,10 +2784,7 @@ pub mod tests {
         // verify the added entry matches expected
         {
             let entry = index.get_account_read_entry(&key).unwrap();
-            assert_eq!(
-                entry.ref_count().load(Ordering::Relaxed),
-                if is_cached { 0 } else { 1 }
-            );
+            assert_eq!(entry.ref_count(), if is_cached { 0 } else { 1 });
             let expected = vec![(slot0, account_infos[0].clone())];
             assert_eq!(entry.slot_list().to_vec(), expected);
             let new_entry =
@@ -2826,10 +2827,7 @@ pub mod tests {
                 index.get_account_read_entry(&key).unwrap()
             };
 
-            assert_eq!(
-                entry.ref_count().load(Ordering::Relaxed),
-                if is_cached { 0 } else { 2 }
-            );
+            assert_eq!(entry.ref_count(), if is_cached { 0 } else { 2 });
             assert_eq!(
                 entry.slot_list().to_vec(),
                 vec![
