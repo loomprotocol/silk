@@ -19,6 +19,7 @@ pub struct TransmitShredsStats {
     pub get_peers_elapsed: u64,
     pub shred_select: u64,
     pub num_shreds: usize,
+    pub dropped_packets: usize,
 }
 
 impl BroadcastStats for TransmitShredsStats {
@@ -28,6 +29,7 @@ impl BroadcastStats for TransmitShredsStats {
         self.get_peers_elapsed += new_stats.get_peers_elapsed;
         self.num_shreds += new_stats.num_shreds;
         self.shred_select += new_stats.shred_select;
+        self.dropped_packets += new_stats.dropped_packets;
     }
     fn report_stats(&mut self, slot: Slot, slot_start: Instant) {
         datapoint_info!(
@@ -45,6 +47,7 @@ impl BroadcastStats for TransmitShredsStats {
             ("get_peers_elapsed", self.get_peers_elapsed as i64, i64),
             ("num_shreds", self.num_shreds as i64, i64),
             ("shred_select", self.shred_select as i64, i64),
+            ("dropped_packets", self.dropped_packets as i64, i64),
         );
     }
 }
@@ -173,6 +176,7 @@ mod test {
                 send_mmsg_elapsed: 3,
                 shred_select: 4,
                 num_shreds: 5,
+                dropped_packets: 6,
             },
             &Some(BroadcastShredBatchInfo {
                 slot: 0,
@@ -190,6 +194,7 @@ mod test {
         assert_eq!(slot_0_stats.broadcast_shred_stats.send_mmsg_elapsed, 3);
         assert_eq!(slot_0_stats.broadcast_shred_stats.shred_select, 4);
         assert_eq!(slot_0_stats.broadcast_shred_stats.num_shreds, 5);
+        assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets, 6);
 
         slot_broadcast_stats.update(
             &TransmitShredsStats {
@@ -198,6 +203,7 @@ mod test {
                 send_mmsg_elapsed: 9,
                 shred_select: 10,
                 num_shreds: 11,
+                dropped_packets: 12,
             },
             &None,
         );
@@ -211,6 +217,7 @@ mod test {
         assert_eq!(slot_0_stats.broadcast_shred_stats.send_mmsg_elapsed, 3);
         assert_eq!(slot_0_stats.broadcast_shred_stats.shred_select, 4);
         assert_eq!(slot_0_stats.broadcast_shred_stats.num_shreds, 5);
+        assert_eq!(slot_0_stats.broadcast_shred_stats.dropped_packets, 6);
 
         // If another batch is given, then total number of batches == num_expected_batches == 2,
         // so the batch should be purged from the HashMap
@@ -221,6 +228,7 @@ mod test {
                 send_mmsg_elapsed: 1,
                 shred_select: 1,
                 num_shreds: 1,
+                dropped_packets: 1,
             },
             &Some(BroadcastShredBatchInfo {
                 slot: 0,
