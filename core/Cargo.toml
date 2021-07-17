@@ -43,10 +43,13 @@ retain_mut = "0.1.2"
 serde = "1.0.122"
 serde_bytes = "0.11"
 serde_derive = "1.0.103"
+serde_json = "1.0.56"
 solana-account-decoder = { path = "../account-decoder", version = "=1.7.6" }
 solana-banks-server = { path = "../banks-server", version = "=1.7.6" }
 solana-clap-utils = { path = "../clap-utils", version = "=1.7.6" }
 solana-client = { path = "../client", version = "=1.7.6" }
+solana-config-program = { path = "../programs/config", version = "=1.7.6" }
+solana-faucet = { path = "../faucet", version = "=1.7.6" }
 solana-gossip = { path = "../gossip", version = "=1.7.6" }
 solana-ledger = { path = "../ledger", version = "=1.7.6" }
 solana-logger = { path = "../logger", version = "=1.7.6" }
@@ -62,7 +65,9 @@ solana-runtime = { path = "../runtime", version = "=1.7.6" }
 solana-sdk = { path = "../sdk", version = "=1.7.6" }
 solana-frozen-abi = { path = "../frozen-abi", version = "=1.7.6" }
 solana-frozen-abi-macro = { path = "../frozen-abi/macro", version = "=1.7.6" }
+solana-storage-bigtable = { path = "../storage-bigtable", version = "=1.7.6" }
 solana-streamer = { path = "../streamer", version = "=1.7.6" }
+solana-sys-tuner = { path = "../sys-tuner", version = "=1.7.6" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.7.6" }
 solana-version = { path = "../version", version = "=1.7.6" }
 solana-vote-program = { path = "../programs/vote", version = "=1.7.6" }

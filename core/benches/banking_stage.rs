@@ -8,6 +8,8 @@ use log::*;
 use rand::{thread_rng, Rng};
 use rayon::prelude::*;
 use solana_core::banking_stage::{BankingStage, BankingStageStats};
+use solana_core::cost_model::CostModel;
+use solana_core::cost_tracker::CostTracker;
 use solana_gossip::cluster_info::ClusterInfo;
 use solana_gossip::cluster_info::Node;
 use solana_ledger::blockstore_processor::process_entries;
@@ -32,7 +34,7 @@ use solana_sdk::transaction::Transaction;
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 use test::Bencher;
 
@@ -91,6 +93,9 @@ fn bench_consume_buffered(bencher: &mut Bencher) {
                 None::<Box<dyn Fn()>>,
                 &BankingStageStats::default(),
                 &recorder,
+                &Arc::new(RwLock::new(CostTracker::new(Arc::new(RwLock::new(
+                    CostModel::new(std::u64::MAX, std::u64::MAX),
+                ))))),
             );
         });
 
@@ -211,6 +216,9 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
             vote_receiver,
             None,
             s,
+            Arc::new(RwLock::new(CostTracker::new(Arc::new(RwLock::new(
+                CostModel::new(std::u64::MAX, std::u64::MAX),
+            ))))),
         );
         poh_recorder.lock().unwrap().set_bank(&bank);
 

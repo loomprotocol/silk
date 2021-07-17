@@ -171,6 +171,14 @@ pub mod merge_nonce_error_into_system_error {
     solana_sdk::declare_id!("21AWDosvp3pBamFW91KB35pNoaoZVTM7ess8nr2nt53B");
 }
 
+pub mod cost_model {
+    solana_sdk::declare_id!("9FVQ9NkYZjS8xeR2pruUdwWLpFrXDoqBSjJKyrbnKaqd");
+}
+
+pub mod tx_wide_compute_cap {
+    solana_sdk::declare_id!("5ekBxc8itEnPv4NzGJtr8BVVQLNMQuLMNQQj7pHoLNZ9");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -213,6 +221,8 @@ lazy_static! {
         (rent_for_sysvars::id(), "collect rent from accounts owned by sysvars"),
         (libsecp256k1_0_5_upgrade_enabled::id(), "upgrade libsecp256k1 to v0.5.0"),
         (merge_nonce_error_into_system_error::id(), "merge NonceError into SystemError"),
+        (cost_model::id(), "cost model feature that regulates block cost limits"),
+        (tx_wide_compute_cap::id(), "Transaction wide compute cap"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

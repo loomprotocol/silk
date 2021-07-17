@@ -114,6 +114,27 @@ impl ReplaySlotStats {
                 i64
             ),
         );
+
+        let mut per_pubkey_timings: Vec<_> = self
+            .execute_timings
+            .details
+            .per_program_timings
+            .iter()
+            .collect();
+        per_pubkey_timings.sort_by(|a, b| b.1 .0.cmp(&a.1 .0));
+        let total: u64 = per_pubkey_timings.iter().map(|a| a.1 .0).sum();
+        for (pubkey, time) in per_pubkey_timings.iter().take(5) {
+            datapoint_info!(
+                "per_program_timings",
+                ("pubkey", pubkey.to_string(), String),
+                ("execute_us", time.0, i64)
+            );
+        }
+        datapoint_info!(
+            "per_program_timings",
+            ("pubkey", "all", String),
+            ("execute_us", total, i64)
+        );
     }
 }
 

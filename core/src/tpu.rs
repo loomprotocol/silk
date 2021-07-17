@@ -8,6 +8,8 @@ use crate::{
         ClusterInfoVoteListener, GossipDuplicateConfirmedSlotsSender, GossipVerifiedVoteHashSender,
         VerifiedVoteSender, VoteTracker,
     },
+    cost_model::CostModel,
+    cost_tracker::CostTracker,
     fetch_stage::FetchStage,
     sigverify::TransactionSigVerifier,
     sigverify_stage::SigVerifyStage,
@@ -69,6 +71,7 @@ impl Tpu {
         bank_notification_sender: Option<BankNotificationSender>,
         tpu_coalesce_ms: u64,
         cluster_confirmed_slot_sender: GossipDuplicateConfirmedSlotsSender,
+        cost_model: &Arc<RwLock<CostModel>>,
     ) -> Self {
         let (packet_sender, packet_receiver) = channel();
         let fetch_stage = FetchStage::new_with_sender(
@@ -103,6 +106,7 @@ impl Tpu {
             cluster_confirmed_slot_sender,
         );
 
+        let cost_tracker = Arc::new(RwLock::new(CostTracker::new(cost_model.clone())));
         let banking_stage = BankingStage::new(
             cluster_info,
             poh_recorder,
@@ -110,6 +114,7 @@ impl Tpu {
             verified_vote_packets_receiver,
             transaction_status_sender,
             replay_vote_sender,
+            cost_tracker,
         );
 
         let broadcast_stage = broadcast_type.new_broadcast_stage(

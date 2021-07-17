@@ -25,6 +25,7 @@ serde_json = "1.0.56"
 serde_yaml = "0.8.13"
 solana-clap-utils = { path = "../clap-utils", version = "=1.7.6" }
 solana-cli-output = { path = "../cli-output", version = "=1.7.6" }
+solana-core = { path = "../core", version = "=1.7.6" }
 solana-ledger = { path = "../ledger", version = "=1.7.6" }
 solana-logger = { path = "../logger", version = "=1.7.6" }
 solana-measure = { path = "../measure", version = "=1.7.6" }

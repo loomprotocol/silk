@@ -4,6 +4,7 @@ use crate::{
 };
 use log::*;
 use serde::{Deserialize, Serialize};
+use solana_measure::measure::Measure;
 use solana_sdk::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     account_utils::StateMut,
@@ -65,6 +66,7 @@ pub struct ExecuteDetailsTimings {
     pub total_account_count: u64,
     pub total_data_size: usize,
     pub data_size_changed: usize,
+    pub per_program_timings: HashMap<Pubkey, (u64, u32)>,
 }
 
 impl ExecuteDetailsTimings {
@@ -77,6 +79,11 @@ impl ExecuteDetailsTimings {
         self.total_account_count += other.total_account_count;
         self.total_data_size += other.total_data_size;
         self.data_size_changed += other.data_size_changed;
+        for (id, other) in &other.per_program_timings {
+            let time_count = self.per_program_timings.entry(*id).or_default();
+            time_count.0 += other.0;
+            time_count.1 += other.1;
+        }
     }
 }
 
@@ -1211,26 +1218,36 @@ impl MessageProcessor {
         ancestors: &Ancestors,
     ) -> Result<(), TransactionError> {
         for (instruction_index, instruction) in message.instructions.iter().enumerate() {
+            let mut time = Measure::start("execute_instruction");
             let instruction_recorder = instruction_recorders
                 .as_ref()
                 .map(|recorders| recorders[instruction_index].clone());
-            self.execute_instruction(
-                message,
-                instruction,
-                &loaders[instruction_index],
-                accounts,
-                rent_collector,
-                log_collector.clone(),
-                executors.clone(),
-                instruction_recorder,
-                instruction_index,
-                feature_set.clone(),
-                bpf_compute_budget,
-                timings,
-                account_db.clone(),
-                ancestors,
-            )
-            .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err))?;
+            let err = self
+                .execute_instruction(
+                    message,
+                    instruction,
+                    &loaders[instruction_index],
+                    accounts,
+                    rent_collector,
+                    log_collector.clone(),
+                    executors.clone(),
+                    instruction_recorder,
+                    instruction_index,
+                    feature_set.clone(),
+                    bpf_compute_budget,
+                    timings,
+                    account_db.clone(),
+                    ancestors,
+                )
+                .map_err(|err| TransactionError::InstructionError(instruction_index as u8, err));
+            time.stop();
+
+            let program_id = instruction.program_id(&message.account_keys);
+            let time_count = timings.per_program_timings.entry(*program_id).or_default();
+            time_count.0 += time.as_us();
+            time_count.1 += 1;
+
+            err?;
         }
         Ok(())
     }
