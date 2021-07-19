@@ -63,6 +63,9 @@ impl ShredWAL {
 
             let path = self.wal_path.join(id.to_string());
             let mut file = fs::File::open(path)?;
+            // In the event of a quick restart, make sure WAL has been completely flushed
+            // from OS buffer to disk before attempting to read from it.
+            file.sync_all()?;
             loop {
                 let mut buffer = vec![0; SHRED_PAYLOAD_SIZE];
                 match file.read_exact(&mut buffer).ok() {
