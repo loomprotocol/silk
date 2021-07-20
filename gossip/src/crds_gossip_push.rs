@@ -19,6 +19,7 @@ use {
         crds_gossip::{get_stake, get_weight},
         crds_gossip_error::CrdsGossipError,
         crds_value::CrdsValue,
+        sync::RwLock,
         weighted_shuffle::WeightedShuffle,
     },
     bincode::serialized_size,
@@ -35,7 +36,7 @@ use {
         ops::{DerefMut, RangeBounds},
         sync::{
             atomic::{AtomicUsize, Ordering},
-            Mutex, RwLock,
+            Mutex,
         },
     },
 };
