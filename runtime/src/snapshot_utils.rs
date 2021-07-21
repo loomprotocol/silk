@@ -133,15 +133,15 @@ impl IncrementalSnapshotArchiveInfo {
         })
     }
 
-    fn path(&self) -> &PathBuf {
+    pub fn path(&self) -> &PathBuf {
         &self.inner.path
     }
 
-    fn base_slot(&self) -> &Slot {
+    pub fn base_slot(&self) -> &Slot {
         &self.base_slot
     }
 
-    fn slot(&self) -> &Slot {
+    pub fn slot(&self) -> &Slot {
         &self.inner.slot
     }
 
