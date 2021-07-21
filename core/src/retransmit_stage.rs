@@ -22,7 +22,12 @@ use solana_metrics::inc_new_counter_error;
 use solana_perf::packet::{Packet, Packets};
 use solana_rpc::{max_slots::MaxSlots, rpc_subscriptions::RpcSubscriptions};
 use solana_runtime::{bank::Bank, bank_forks::BankForks};
-use solana_sdk::{clock::Slot, epoch_schedule::EpochSchedule, pubkey::Pubkey, timing::timestamp};
+use solana_sdk::{
+    clock::Slot,
+    epoch_schedule::EpochSchedule,
+    pubkey::Pubkey,
+    timing::{timestamp, AtomicInterval},
+};
 use solana_streamer::streamer::PacketReceiver;
 use std::{
     collections::hash_set::HashSet,
@@ -55,7 +60,7 @@ struct RetransmitStats {
     repair_total: AtomicU64,
     discard_total: AtomicU64,
     retransmit_total: AtomicU64,
-    last_ts: AtomicU64,
+    last_ts: AtomicInterval,
     compute_turbine_peers_total: AtomicU64,
     retransmit_tree_mismatch: AtomicU64,
     packets_by_slot: Mutex<BTreeMap<Slot, usize>>,
@@ -115,12 +120,7 @@ fn update_retransmit_stats(
         }
     }
 
-    let now = timestamp();
-    let last = stats.last_ts.load(Ordering::Relaxed);
-    #[allow(deprecated)]
-    if now.saturating_sub(last) > 2000
-        && stats.last_ts.compare_and_swap(last, now, Ordering::Relaxed) == last
-    {
+    if stats.last_ts.should_update(2000) {
         datapoint_info!("retransmit-num_nodes", ("count", peers_len, i64));
         datapoint_info!(
             "retransmit-stage",
@@ -278,7 +278,7 @@ fn retransmit(
     id: u32,
     stats: &RetransmitStats,
     cluster_nodes: &RwLock<ClusterNodes<RetransmitStage>>,
-    last_peer_update: &AtomicU64,
+    last_peer_update: &AtomicInterval,
     shreds_received: &Mutex<ShredFilterAndHasher>,
     max_slots: &MaxSlots,
     first_shreds_received: &Mutex<BTreeSet<Slot>>,
@@ -308,12 +308,7 @@ fn retransmit(
     epoch_fetch.stop();
 
     let mut epoch_cache_update = Measure::start("retransmit_epoch_cach_update");
-    let now = timestamp();
-    let last = last_peer_update.load(Ordering::Relaxed);
-    #[allow(deprecated)]
-    if now.saturating_sub(last) > 1000
-        && last_peer_update.compare_and_swap(last, now, Ordering::Relaxed) == last
-    {
+    if last_peer_update.should_update_ext(1000, false) {
         let epoch_staked_nodes = r_bank.epoch_staked_nodes(bank_epoch);
         *cluster_nodes.write().unwrap() = ClusterNodes::<RetransmitStage>::new(
             cluster_info,
@@ -470,7 +465,7 @@ pub fn retransmitter(
             let cluster_info = cluster_info.clone();
             let stats = stats.clone();
             let cluster_nodes = Arc::default();
-            let last_peer_update = Arc::new(AtomicU64::new(0));
+            let last_peer_update = Arc::new(AtomicInterval::default());
             let shreds_received = shreds_received.clone();
             let max_slots = max_slots.clone();
             let first_shreds_received = first_shreds_received.clone();
@@ -653,6 +648,7 @@ mod tests {
         let me_retransmit = UdpSocket::bind(format!("127.0.0.1:{}", port)).unwrap();
         // need to make sure tvu and tpu are valid addresses
         me.tvu_forwards = me_retransmit.local_addr().unwrap();
+
         let port = find_available_port_in_range(ip_addr, (8000, 10000)).unwrap();
         me.tvu = UdpSocket::bind(format!("127.0.0.1:{}", port))
             .unwrap()

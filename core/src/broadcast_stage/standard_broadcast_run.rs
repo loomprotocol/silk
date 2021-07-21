@@ -9,7 +9,11 @@ use solana_entry::entry::Entry;
 use solana_ledger::shred::{
     ProcessShredsStats, Shred, Shredder, MAX_DATA_SHREDS_PER_FEC_BLOCK, SHRED_TICK_REFERENCE_MASK,
 };
-use solana_sdk::{pubkey::Pubkey, signature::Keypair, timing::duration_as_us};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::Keypair,
+    timing::{duration_as_us, AtomicInterval},
+};
 use std::{collections::HashMap, sync::RwLock, time::Duration};
 
 #[derive(Clone)]
@@ -21,10 +25,10 @@ pub struct StandardBroadcastRun {
     current_slot_and_parent: Option<(u64, u64)>,
     slot_broadcast_start: Option<Instant>,
     shred_version: u16,
-    last_datapoint_submit: Arc<AtomicU64>,
+    last_datapoint_submit: Arc<AtomicInterval>,
     num_batches: usize,
     cluster_nodes: Arc<RwLock<ClusterNodes<BroadcastStage>>>,
-    last_peer_update: Arc<AtomicU64>,
+    last_peer_update: Arc<AtomicInterval>,
 }
 
 impl StandardBroadcastRun {
@@ -40,7 +44,7 @@ impl StandardBroadcastRun {
             last_datapoint_submit: Arc::default(),
             num_batches: 0,
             cluster_nodes: Arc::default(),
-            last_peer_update: Arc::default(),
+            last_peer_update: Arc::new(AtomicInterval::default()),
         }
     }
 
@@ -338,14 +342,9 @@ impl StandardBroadcastRun {
         trace!("Broadcasting {:?} shreds", shreds.len());
         // Get the list of peers to broadcast to
         let mut get_peers_time = Measure::start("broadcast::get_peers");
-        let now = timestamp();
-        let last = self.last_peer_update.load(Ordering::Relaxed);
-        #[allow(deprecated)]
-        if now - last > BROADCAST_PEER_UPDATE_INTERVAL_MS
-            && self
-                .last_peer_update
-                .compare_and_swap(now, last, Ordering::Relaxed)
-                == last
+        if self
+            .last_peer_update
+            .should_update_ext(BROADCAST_PEER_UPDATE_INTERVAL_MS, false)
         {
             *self.cluster_nodes.write().unwrap() = ClusterNodes::<BroadcastStage>::new(
                 cluster_info,
