@@ -107,7 +107,8 @@ impl Sanitize for Message {
     }
 }
 
-/// Address map specifies which entries to load and
+/// Address map specifies read-only and writable entries
+/// to load for the transaction.
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, AbiExample)]
 #[serde(rename_all = "camelCase")]
 pub struct AddressMap {
