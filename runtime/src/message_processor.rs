@@ -9,6 +9,7 @@ use solana_sdk::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
     account_utils::StateMut,
     bpf_loader_upgradeable::{self, UpgradeableLoaderState},
+    compute_budget::ComputeBudget,
     feature_set::{
         instructions_sysvar_enabled, neon_evm_compute_budget, tx_wide_compute_cap,
         updated_verify_policy, FeatureSet,
@@ -19,7 +20,7 @@ use solana_sdk::{
     message::Message,
     native_loader,
     process_instruction::{
-        BpfComputeBudget, ComputeMeter, Executor, InvokeContext, InvokeContextStackFrame, Logger,
+        ComputeMeter, Executor, InvokeContext, InvokeContextStackFrame, Logger,
         ProcessInstructionWithContext,
     },
     pubkey::Pubkey,
@@ -290,7 +291,9 @@ pub struct ThisInvokeContext<'a> {
     accounts: &'a [(Pubkey, Rc<RefCell<AccountSharedData>>)],
     programs: &'a [(Pubkey, ProcessInstructionWithContext)],
     logger: Rc<RefCell<dyn Logger>>,
-    bpf_compute_budget: BpfComputeBudget,
+    compute_budget: ComputeBudget,
+    #[allow(deprecated)]
+    bpf_compute_budget: solana_sdk::process_instruction::BpfComputeBudget,
     compute_meter: Rc<RefCell<dyn ComputeMeter>>,
     executors: Rc<RefCell<Executors>>,
     instruction_recorder: Option<InstructionRecorder>,
@@ -312,7 +315,7 @@ impl<'a> ThisInvokeContext<'a> {
         accounts: &'a [(Pubkey, Rc<RefCell<AccountSharedData>>)],
         programs: &'a [(Pubkey, ProcessInstructionWithContext)],
         log_collector: Option<Rc<LogCollector>>,
-        bpf_compute_budget: BpfComputeBudget,
+        compute_budget: ComputeBudget,
         compute_meter: Rc<RefCell<dyn ComputeMeter>>,
         executors: Rc<RefCell<Executors>>,
         instruction_recorder: Option<InstructionRecorder>,
@@ -331,17 +334,18 @@ impl<'a> ThisInvokeContext<'a> {
             compute_meter
         } else {
             Rc::new(RefCell::new(ThisComputeMeter {
-                remaining: bpf_compute_budget.max_units,
+                remaining: compute_budget.max_units,
             }))
         };
         let mut invoke_context = Self {
-            invoke_stack: Vec::with_capacity(bpf_compute_budget.max_invoke_depth),
+            invoke_stack: Vec::with_capacity(compute_budget.max_invoke_depth),
             rent,
             pre_accounts,
             accounts,
             programs,
             logger: Rc::new(RefCell::new(ThisLogger { log_collector })),
-            bpf_compute_budget,
+            compute_budget,
+            bpf_compute_budget: compute_budget.into(),
             compute_meter,
             executors,
             instruction_recorder,
@@ -366,7 +370,7 @@ impl<'a> InvokeContext for ThisInvokeContext<'a> {
         key: &Pubkey,
         keyed_accounts: &[(bool, bool, &Pubkey, &RefCell<AccountSharedData>)],
     ) -> Result<(), InstructionError> {
-        if self.invoke_stack.len() > self.bpf_compute_budget.max_invoke_depth {
+        if self.invoke_stack.len() > self.compute_budget.max_invoke_depth {
             return Err(InstructionError::CallDepth);
         }
 
@@ -470,7 +474,8 @@ impl<'a> InvokeContext for ThisInvokeContext<'a> {
     fn get_logger(&self) -> Rc<RefCell<dyn Logger>> {
         self.logger.clone()
     }
-    fn get_bpf_compute_budget(&self) -> &BpfComputeBudget {
+    #[allow(deprecated)]
+    fn get_bpf_compute_budget(&self) -> &solana_sdk::process_instruction::BpfComputeBudget {
         &self.bpf_compute_budget
     }
     fn get_compute_meter(&self) -> Rc<RefCell<dyn ComputeMeter>> {
@@ -530,6 +535,9 @@ impl<'a> InvokeContext for ThisInvokeContext<'a> {
         } else {
             None
         }
+    }
+    fn get_compute_budget(&self) -> &ComputeBudget {
+        &self.compute_budget
     }
 }
 pub struct ThisLogger {
@@ -1155,7 +1163,7 @@ impl MessageProcessor {
         instruction_recorder: Option<InstructionRecorder>,
         instruction_index: usize,
         feature_set: Arc<FeatureSet>,
-        bpf_compute_budget: BpfComputeBudget,
+        compute_budget: ComputeBudget,
         compute_meter: Rc<RefCell<dyn ComputeMeter>>,
         timings: &mut ExecuteDetailsTimings,
         account_db: Arc<Accounts>,
@@ -1178,13 +1186,13 @@ impl MessageProcessor {
 
         let program_id = instruction.program_id(&message.account_keys);
 
-        let mut bpf_compute_budget = bpf_compute_budget;
+        let mut compute_budget = compute_budget;
         if feature_set.is_active(&neon_evm_compute_budget::id())
             && *program_id == crate::neon_evm_program::id()
         {
             // Bump the compute budget for neon_evm
-            bpf_compute_budget.max_units = bpf_compute_budget.max_units.max(500_000);
-            bpf_compute_budget.heap_size = Some(256 * 1024);
+            compute_budget.max_units = compute_budget.max_units.max(500_000);
+            compute_budget.heap_size = Some(256 * 1024);
         }
 
         let mut invoke_context = ThisInvokeContext::new(
@@ -1196,7 +1204,7 @@ impl MessageProcessor {
             accounts,
             &self.programs,
             log_collector,
-            bpf_compute_budget,
+            compute_budget,
             compute_meter,
             executors,
             instruction_recorder,
@@ -1237,7 +1245,7 @@ impl MessageProcessor {
         executors: Rc<RefCell<Executors>>,
         instruction_recorders: Option<&[InstructionRecorder]>,
         feature_set: Arc<FeatureSet>,
-        bpf_compute_budget: BpfComputeBudget,
+        compute_budget: ComputeBudget,
         compute_meter: Rc<RefCell<dyn ComputeMeter>>,
         timings: &mut ExecuteDetailsTimings,
         account_db: Arc<Accounts>,
@@ -1261,7 +1269,7 @@ impl MessageProcessor {
                     instruction_recorder,
                     instruction_index,
                     feature_set.clone(),
-                    bpf_compute_budget,
+                    compute_budget,
                     compute_meter.clone(),
                     timings,
                     account_db.clone(),
@@ -1338,7 +1346,7 @@ mod tests {
             &accounts,
             &[],
             None,
-            BpfComputeBudget::default(),
+            ComputeBudget::default(),
             Rc::new(RefCell::new(MockComputeMeter::default())),
             Rc::new(RefCell::new(Executors::default())),
             None,
@@ -1952,7 +1960,7 @@ mod tests {
             executors.clone(),
             None,
             Arc::new(FeatureSet::all_enabled()),
-            BpfComputeBudget::new(),
+            ComputeBudget::new(),
             Rc::new(RefCell::new(MockComputeMeter::default())),
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
@@ -1980,7 +1988,7 @@ mod tests {
             executors.clone(),
             None,
             Arc::new(FeatureSet::all_enabled()),
-            BpfComputeBudget::new(),
+            ComputeBudget::new(),
             Rc::new(RefCell::new(MockComputeMeter::default())),
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
@@ -2012,7 +2020,7 @@ mod tests {
             executors,
             None,
             Arc::new(FeatureSet::all_enabled()),
-            BpfComputeBudget::new(),
+            ComputeBudget::new(),
             Rc::new(RefCell::new(MockComputeMeter::default())),
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
@@ -2136,7 +2144,7 @@ mod tests {
             executors.clone(),
             None,
             Arc::new(FeatureSet::all_enabled()),
-            BpfComputeBudget::new(),
+            ComputeBudget::new(),
             Rc::new(RefCell::new(MockComputeMeter::default())),
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
@@ -2168,7 +2176,7 @@ mod tests {
             executors.clone(),
             None,
             Arc::new(FeatureSet::all_enabled()),
-            BpfComputeBudget::new(),
+            ComputeBudget::new(),
             Rc::new(RefCell::new(MockComputeMeter::default())),
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
@@ -2198,7 +2206,7 @@ mod tests {
             executors,
             None,
             Arc::new(FeatureSet::all_enabled()),
-            BpfComputeBudget::new(),
+            ComputeBudget::new(),
             Rc::new(RefCell::new(MockComputeMeter::default())),
             &mut ExecuteDetailsTimings::default(),
             Arc::new(Accounts::default()),
@@ -2300,7 +2308,7 @@ mod tests {
             &accounts,
             programs.as_slice(),
             None,
-            BpfComputeBudget::default(),
+            ComputeBudget::default(),
             Rc::new(RefCell::new(MockComputeMeter::default())),
             Rc::new(RefCell::new(Executors::default())),
             None,
@@ -2357,7 +2365,7 @@ mod tests {
                 &accounts,
                 programs.as_slice(),
                 None,
-                BpfComputeBudget::default(),
+                ComputeBudget::default(),
                 Rc::new(RefCell::new(MockComputeMeter::default())),
                 Rc::new(RefCell::new(Executors::default())),
                 None,

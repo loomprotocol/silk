@@ -139,7 +139,7 @@ accounts are permanently marked as executable by the loader once they are
 successfully deployed. The runtime will reject transactions that specify programs
 that are not executable.
 
-Unlike on-chain programs, [Native Programs](developing/runtime-facilities/programs)
+Unlike on-chain programs, [Native Programs](developing/runtime-facilities/programs.md)
 are handled differently in that they are built directly into the Solana runtime.
 
 ### Accounts

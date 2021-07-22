@@ -78,10 +78,10 @@ pub fn create_executor(
         ic_msg!(invoke_context, "Failed to register syscalls: {}", e);
         InstructionError::ProgramEnvironmentSetupFailure
     })?;
-    let bpf_compute_budget = invoke_context.get_bpf_compute_budget();
+    let compute_budget = invoke_context.get_compute_budget();
     let config = Config {
-        max_call_depth: bpf_compute_budget.max_call_depth,
-        stack_frame_size: bpf_compute_budget.stack_frame_size,
+        max_call_depth: compute_budget.max_call_depth,
+        stack_frame_size: compute_budget.stack_frame_size,
         enable_instruction_tracing: log_enabled!(Trace),
         ..Config::default()
     };
@@ -149,11 +149,9 @@ pub fn create_vm<'a>(
     parameter_bytes: &mut [u8],
     invoke_context: &'a mut dyn InvokeContext,
 ) -> Result<EbpfVm<'a, BpfError, ThisInstructionMeter>, EbpfError<BpfError>> {
-    let bpf_compute_budget = invoke_context.get_bpf_compute_budget();
-    let heap = AlignedMemory::new_with_size(
-        bpf_compute_budget.heap_size.unwrap_or(HEAP_LENGTH),
-        HOST_ALIGN,
-    );
+    let compute_budget = invoke_context.get_compute_budget();
+    let heap =
+        AlignedMemory::new_with_size(compute_budget.heap_size.unwrap_or(HEAP_LENGTH), HOST_ALIGN);
     let heap_region = MemoryRegion::new_from_slice(heap.as_slice(), MM_HEAP_START, 0, true);
     let mut vm = EbpfVm::new(program, parameter_bytes, &[heap_region])?;
     syscalls::bind_syscall_context_objects(loader_id, &mut vm, invoke_context, heap)?;
@@ -866,6 +864,7 @@ mod tests {
         account_utils::StateMut,
         client::SyncClient,
         clock::Clock,
+        compute_budget::ComputeBudget,
         feature_set::FeatureSet,
         genesis_config::create_genesis_config,
         instruction::Instruction,
@@ -873,8 +872,7 @@ mod tests {
         keyed_account::KeyedAccount,
         message::Message,
         process_instruction::{
-            BpfComputeBudget, InvokeContextStackFrame, MockComputeMeter, MockInvokeContext,
-            MockLogger,
+            InvokeContextStackFrame, MockComputeMeter, MockInvokeContext, MockLogger,
         },
         pubkey::Pubkey,
         rent::Rent,
@@ -1133,7 +1131,8 @@ mod tests {
                 keyed_accounts_range,
             }],
             logger: MockLogger::default(),
-            bpf_compute_budget: BpfComputeBudget::default(),
+            compute_budget: ComputeBudget::default(),
+            bpf_compute_budget: ComputeBudget::default().into(),
             compute_meter: MockComputeMeter::default(),
             programs: vec![],
             accounts: vec![],

@@ -17,6 +17,7 @@ use {
         account::{Account, AccountSharedData, ReadableAccount, WritableAccount},
         account_info::AccountInfo,
         clock::{Clock, Slot},
+        compute_budget::ComputeBudget,
         entrypoint::{ProgramResult, SUCCESS},
         epoch_schedule::EpochSchedule,
         fee_calculator::{FeeCalculator, FeeRateGovernor},
@@ -26,9 +27,7 @@ use {
         instruction::InstructionError,
         message::Message,
         native_token::sol_to_lamports,
-        process_instruction::{
-            stable_log, BpfComputeBudget, InvokeContext, ProcessInstructionWithContext,
-        },
+        process_instruction::{stable_log, InvokeContext, ProcessInstructionWithContext},
         program_error::{ProgramError, ACCOUNT_BORROW_FAILED, UNSUPPORTED_SYSVAR},
         pubkey::Pubkey,
         rent::Rent,
@@ -212,7 +211,7 @@ fn get_sysvar<T: Default + Sysvar + Sized + serde::de::DeserializeOwned>(
         .try_borrow_mut()
         .map_err(|_| ACCOUNT_BORROW_FAILED)
         .unwrap()
-        .consume(invoke_context.get_bpf_compute_budget().sysvar_base_cost + T::size_of() as u64)
+        .consume(invoke_context.get_compute_budget().sysvar_base_cost + T::size_of() as u64)
         .is_err()
     {
         panic!("Exceeded compute budget");
@@ -462,7 +461,7 @@ fn setup_fee_calculator(bank: Bank) -> Bank {
 pub struct ProgramTest {
     accounts: Vec<(Pubkey, AccountSharedData)>,
     builtins: Vec<Builtin>,
-    bpf_compute_max_units: Option<u64>,
+    compute_max_units: Option<u64>,
     prefer_bpf: bool,
     use_bpf_jit: bool,
 }
@@ -492,7 +491,7 @@ impl Default for ProgramTest {
         Self {
             accounts: vec![],
             builtins: vec![],
-            bpf_compute_max_units: None,
+            compute_max_units: None,
             prefer_bpf,
             use_bpf_jit: false,
         }
@@ -522,9 +521,16 @@ impl ProgramTest {
         self.prefer_bpf = prefer_bpf;
     }
 
+    /// Override the default maximum compute units
+    pub fn set_compute_max_units(&mut self, compute_max_units: u64) {
+        self.compute_max_units = Some(compute_max_units);
+    }
+
     /// Override the BPF compute budget
+    #[allow(deprecated)]
+    #[deprecated(since = "1.8.0", note = "please use `set_compute_max_units` instead")]
     pub fn set_bpf_compute_max_units(&mut self, bpf_compute_max_units: u64) {
-        self.bpf_compute_max_units = Some(bpf_compute_max_units);
+        self.compute_max_units = Some(bpf_compute_max_units);
     }
 
     /// Execute the BPF program with JIT if true, interpreted if false
@@ -783,10 +789,10 @@ impl ProgramTest {
             bank.store_account(address, account);
         }
         bank.set_capitalization();
-        if let Some(max_units) = self.bpf_compute_max_units {
-            bank.set_bpf_compute_budget(Some(BpfComputeBudget {
+        if let Some(max_units) = self.compute_max_units {
+            bank.set_compute_budget(Some(ComputeBudget {
                 max_units,
-                ..BpfComputeBudget::default()
+                ..ComputeBudget::default()
             }));
         }
         let bank = setup_fee_calculator(bank);

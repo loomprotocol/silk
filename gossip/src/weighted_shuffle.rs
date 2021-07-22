@@ -9,6 +9,7 @@ use {
     },
     rand_chacha::ChaChaRng,
     std::{
+        borrow::Borrow,
         iter,
         ops::{AddAssign, Div, Sub, SubAssign},
     },
@@ -136,18 +137,20 @@ where
 
 /// Returns a list of indexes shuffled based on the input weights
 /// Note - The sum of all weights must not exceed `u64::MAX`
-pub fn weighted_shuffle<T>(weights: &[T], seed: [u8; 32]) -> Vec<usize>
+pub fn weighted_shuffle<T, B, F>(weights: F, seed: [u8; 32]) -> Vec<usize>
 where
     T: Copy + PartialOrd + iter::Sum + Div<T, Output = T> + FromPrimitive + ToPrimitive,
+    B: Borrow<T>,
+    F: Iterator<Item = B> + Clone,
 {
-    let total_weight: T = weights.iter().copied().sum();
+    let total_weight: T = weights.clone().map(|x| *x.borrow()).sum();
     let mut rng = ChaChaRng::from_seed(seed);
     weights
-        .iter()
         .enumerate()
-        .map(|(i, v)| {
+        .map(|(i, weight)| {
+            let weight = weight.borrow();
             // This generates an "inverse" weight but it avoids floating point math
-            let x = (total_weight / *v)
+            let x = (total_weight / *weight)
                 .to_u64()
                 .expect("values > u64::max are not supported");
             (
@@ -223,7 +226,7 @@ mod tests {
     fn test_weighted_shuffle_iterator() {
         let mut test_set = [0; 6];
         let mut count = 0;
-        let shuffle = weighted_shuffle(&[50, 10, 2, 1, 1, 1], [0x5a; 32]);
+        let shuffle = weighted_shuffle(vec![50, 10, 2, 1, 1, 1].into_iter(), [0x5a; 32]);
         shuffle.into_iter().for_each(|x| {
             assert_eq!(test_set[x], 0);
             test_set[x] = 1;
@@ -238,7 +241,7 @@ mod tests {
         let mut test_weights = vec![0; 100];
         (0..100).for_each(|i| test_weights[i] = (i + 1) as u64);
         let mut count = 0;
-        let shuffle = weighted_shuffle(&test_weights, [0xa5; 32]);
+        let shuffle = weighted_shuffle(test_weights.into_iter(), [0xa5; 32]);
         shuffle.into_iter().for_each(|x| {
             assert_eq!(test_set[x], 0);
             test_set[x] = 1;
@@ -249,9 +252,9 @@ mod tests {
 
     #[test]
     fn test_weighted_shuffle_compare() {
-        let shuffle = weighted_shuffle(&[50, 10, 2, 1, 1, 1], [0x5a; 32]);
+        let shuffle = weighted_shuffle(vec![50, 10, 2, 1, 1, 1].into_iter(), [0x5a; 32]);
 
-        let shuffle1 = weighted_shuffle(&[50, 10, 2, 1, 1, 1], [0x5a; 32]);
+        let shuffle1 = weighted_shuffle(vec![50, 10, 2, 1, 1, 1].into_iter(), [0x5a; 32]);
         shuffle1
             .into_iter()
             .zip(shuffle.into_iter())
@@ -264,7 +267,7 @@ mod tests {
     fn test_weighted_shuffle_imbalanced() {
         let mut weights = vec![std::u32::MAX as u64; 3];
         weights.push(1);
-        let shuffle = weighted_shuffle(&weights, [0x5a; 32]);
+        let shuffle = weighted_shuffle(weights.iter().cloned(), [0x5a; 32]);
         shuffle.into_iter().for_each(|x| {
             if x == weights.len() - 1 {
                 assert_eq!(weights[x], 1);

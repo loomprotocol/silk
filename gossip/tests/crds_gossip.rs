@@ -187,7 +187,7 @@ fn ring_network_create(num: usize) -> Network {
             let start_id = keys[k];
             let label = CrdsValueLabel::ContactInfo(start_id);
             let gossip_crds = start.gossip.crds.read().unwrap();
-            gossip_crds.get(&label).unwrap().value.clone()
+            gossip_crds.get::<&CrdsValue>(&label).unwrap().clone()
         };
         let end = network.get_mut(&keys[(k + 1) % keys.len()]).unwrap();
         let mut end_crds = end.gossip.crds.write().unwrap();
@@ -221,7 +221,7 @@ fn connected_staked_network_create(stakes: &[u64]) -> Network {
             let start = &network[k];
             let start_label = CrdsValueLabel::ContactInfo(*k);
             let gossip_crds = start.gossip.crds.read().unwrap();
-            gossip_crds.get(&start_label).unwrap().value.clone()
+            gossip_crds.get::<&CrdsValue>(&start_label).unwrap().clone()
         })
         .collect();
     for (end_pubkey, end) in network.iter_mut() {
@@ -276,7 +276,7 @@ fn network_simulator(thread_pool: &ThreadPool, network: &mut Network, max_conver
             let node_pubkey = node.keypair.pubkey();
             let mut m = {
                 let node_crds = node.gossip.crds.read().unwrap();
-                node_crds.get_contact_info(node_pubkey).cloned().unwrap()
+                node_crds.get::<&ContactInfo>(node_pubkey).cloned().unwrap()
             };
             m.wallclock = now;
             node.gossip.process_push_message(
@@ -495,7 +495,7 @@ fn network_run_pull(
                     let from_pubkey = from.keypair.pubkey();
                     let label = CrdsValueLabel::ContactInfo(from_pubkey);
                     let gossip_crds = from.gossip.crds.read().unwrap();
-                    let self_info = gossip_crds.get(&label).unwrap().value.clone();
+                    let self_info = gossip_crds.get::<&CrdsValue>(&label).unwrap().clone();
                     Some((peer.id, filters, self_info))
                 })
                 .collect()

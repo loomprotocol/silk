@@ -1,7 +1,8 @@
 use crate::{
     cluster_slots::ClusterSlots,
+    duplicate_repair_status::ANCESTOR_HASH_REPAIR_SAMPLE_SIZE,
     repair_response,
-    repair_service::{OutstandingRepairs, RepairStats},
+    repair_service::{OutstandingShredRepairs, RepairStats},
     request_response::RequestResponse,
     result::{Error, Result},
 };
@@ -14,7 +15,7 @@ use rand::{
 use solana_gossip::{
     cluster_info::{ClusterInfo, ClusterInfoError},
     contact_info::ContactInfo,
-    weighted_shuffle::weighted_best,
+    weighted_shuffle::{weighted_best, weighted_shuffle},
 };
 use solana_ledger::{
     ancestor_iterator::{AncestorIterator, AncestorIteratorWithHash},
@@ -487,7 +488,7 @@ impl ServeRepair {
         peers_cache: &mut LruCache<Slot, RepairPeers>,
         repair_stats: &mut RepairStats,
         repair_validators: &Option<HashSet<Pubkey>>,
-        outstanding_requests: &mut OutstandingRepairs,
+        outstanding_requests: &mut OutstandingShredRepairs,
     ) -> Result<(SocketAddr, Vec<u8>)> {
         // find a peer that appears to be accepting replication and has the desired slot, as indicated
         // by a valid tvu port location
@@ -510,6 +511,28 @@ impl ServeRepair {
         Ok((addr, out))
     }
 
+    pub fn repair_request_ancestor_hashes_sample_peers(
+        &self,
+        slot: Slot,
+        cluster_slots: &ClusterSlots,
+        repair_validators: &Option<HashSet<Pubkey>>,
+    ) -> Result<Vec<(Pubkey, SocketAddr)>> {
+        let repair_peers: Vec<_> = self.repair_peers(repair_validators, slot);
+        if repair_peers.is_empty() {
+            return Err(ClusterInfoError::NoPeers.into());
+        }
+        let weights = cluster_slots.compute_weights_exclude_nonfrozen(slot, &repair_peers);
+        let mut sampled_validators = weighted_shuffle(
+            weights.into_iter().map(|(stake, _i)| stake),
+            solana_sdk::pubkey::new_rand().to_bytes(),
+        );
+        sampled_validators.truncate(ANCESTOR_HASH_REPAIR_SAMPLE_SIZE);
+        Ok(sampled_validators
+            .into_iter()
+            .map(|i| (repair_peers[i].id, repair_peers[i].serve_repair))
+            .collect())
+    }
+
     pub fn repair_request_duplicate_compute_best_peer(
         &self,
         slot: Slot,
@@ -520,7 +543,7 @@ impl ServeRepair {
         if repair_peers.is_empty() {
             return Err(ClusterInfoError::NoPeers.into());
         }
-        let weights = cluster_slots.compute_weights_exclude_noncomplete(slot, &repair_peers);
+        let weights = cluster_slots.compute_weights_exclude_nonfrozen(slot, &repair_peers);
         let n = weighted_best(&weights, solana_sdk::pubkey::new_rand().to_bytes());
         Ok((repair_peers[n].id, repair_peers[n].serve_repair))
     }
@@ -882,7 +905,7 @@ mod tests {
         let me = ContactInfo::new_localhost(&solana_sdk::pubkey::new_rand(), timestamp());
         let cluster_info = Arc::new(ClusterInfo::new_with_invalid_keypair(me));
         let serve_repair = ServeRepair::new(cluster_info.clone());
-        let mut outstanding_requests = OutstandingRepairs::default();
+        let mut outstanding_requests = OutstandingShredRepairs::default();
         let rv = serve_repair.repair_request(
             &cluster_slots,
             ShredRepairType::Shred(0, 0),
@@ -1215,7 +1238,7 @@ mod tests {
                     &mut LruCache::new(100),
                     &mut RepairStats::default(),
                     &trusted_validators,
-                    &mut OutstandingRepairs::default(),
+                    &mut OutstandingShredRepairs::default(),
                 )
                 .is_err());
         }
@@ -1232,7 +1255,7 @@ mod tests {
                 &mut LruCache::new(100),
                 &mut RepairStats::default(),
                 &trusted_validators,
-                &mut OutstandingRepairs::default(),
+                &mut OutstandingShredRepairs::default(),
             )
             .is_ok());
 
@@ -1253,7 +1276,7 @@ mod tests {
                 &mut LruCache::new(100),
                 &mut RepairStats::default(),
                 &None,
-                &mut OutstandingRepairs::default(),
+                &mut OutstandingShredRepairs::default(),
             )
             .is_ok());
     }

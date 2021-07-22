@@ -43,7 +43,7 @@ solana-storage-bigtable = { path = "../storage-bigtable", version = "=1.8.0" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.8.0" }
 solana-version = { path = "../version", version = "=1.8.0" }
 solana-vote-program = { path = "../programs/vote", version = "=1.8.0" }
-spl-token-v2-0 = { package = "spl-token", version = "=3.1.1", features = ["no-entrypoint"] }
+spl-token-v2-0 = { package = "spl-token", version = "=3.2.0", features = ["no-entrypoint"] }
 tokio = { version = "1", features = ["full"] }
 tokio_02 = { version = "0.2", package = "tokio", features = ["full"] }
 tokio-util = { version = "0.3", features = ["codec"] } # This crate needs to stay in sync with tokio_02, until that dependency can be removed

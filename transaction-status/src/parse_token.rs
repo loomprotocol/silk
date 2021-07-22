@@ -372,6 +372,15 @@ pub fn parse_token(
                 info: value,
             })
         }
+        TokenInstruction::SyncNative => {
+            check_num_token_accounts(&instruction.accounts, 1)?;
+            Ok(ParsedInstructionEnum {
+                instruction_type: "syncNative".to_string(),
+                info: json!({
+                    "account": account_keys[instruction.accounts[0] as usize].to_string(),
+                }),
+            })
+        }
     }
 }
 
@@ -930,7 +939,7 @@ mod test {
             }
         );
 
-        // Test Approve2, incl multisig
+        // Test ApproveChecked, incl multisig
         let approve_ix = approve_checked(
             &spl_token_v2_0::id(),
             &convert_pubkey(keys[1]),
@@ -996,7 +1005,7 @@ mod test {
             }
         );
 
-        // Test MintTo2
+        // Test MintToChecked
         let mint_to_ix = mint_to_checked(
             &spl_token_v2_0::id(),
             &convert_pubkey(keys[1]),
@@ -1027,7 +1036,7 @@ mod test {
             }
         );
 
-        // Test Burn2
+        // Test BurnChecked
         let burn_ix = burn_checked(
             &spl_token_v2_0::id(),
             &convert_pubkey(keys[1]),
@@ -1054,6 +1063,20 @@ mod test {
                        "amount": "42",
                        "uiAmountString": "0.42",
                    }
+                })
+            }
+        );
+
+        // Test SyncNative
+        let sync_native_ix = sync_native(&spl_token_v2_0::id(), &convert_pubkey(keys[0])).unwrap();
+        let message = Message::new(&[sync_native_ix], None);
+        let compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert_eq!(
+            parse_token(&compiled_instruction, &keys).unwrap(),
+            ParsedInstructionEnum {
+                instruction_type: "syncNative".to_string(),
+                info: json!({
+                   "account": keys[0].to_string(),
                 })
             }
         );
@@ -1418,6 +1441,15 @@ mod test {
         let message = Message::new(&[burn_ix], None);
         let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
         assert!(parse_token(&compiled_instruction, &keys[0..2]).is_err());
+        compiled_instruction.accounts =
+            compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
+        assert!(parse_token(&compiled_instruction, &keys).is_err());
+
+        // Test SyncNative
+        let sync_native_ix = sync_native(&spl_token_v2_0::id(), &convert_pubkey(keys[0])).unwrap();
+        let message = Message::new(&[sync_native_ix], None);
+        let mut compiled_instruction = convert_compiled_instruction(&message.instructions[0]);
+        assert!(parse_token(&compiled_instruction, &[]).is_err());
         compiled_instruction.accounts =
             compiled_instruction.accounts[0..compiled_instruction.accounts.len() - 1].to_vec();
         assert!(parse_token(&compiled_instruction, &keys).is_err());

@@ -8,7 +8,7 @@ use std::{cell::Ref, cell::RefCell, cmp, fmt, rc::Rc, sync::Arc};
 
 /// An Account with data that is stored on chain
 #[repr(C)]
-#[frozen_abi(digest = "AXJTWWXfp49rHb34ayFzFLSEuaRbMUsVPNzBDyP3UPjc")]
+#[frozen_abi(digest = "HawRVHh7t4d3H3bitWHFt25WhhoDmbJMCfWdESQQoYEy")]
 #[derive(Serialize, Deserialize, PartialEq, Eq, Clone, Default, AbiExample)]
 #[serde(rename_all = "camelCase")]
 pub struct Account {

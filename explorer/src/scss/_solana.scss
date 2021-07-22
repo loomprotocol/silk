@@ -379,8 +379,11 @@ pre.json-wrap {
 }
 
 p.updated-time {
+  position: absolute;
   font-size: 0.66rem;
-  text-align: right;
+  margin: .375rem;
+  right: 0;
+  bottom: 0;
 }
 
 .change-positive {

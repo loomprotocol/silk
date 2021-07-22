@@ -22,6 +22,7 @@ pub mod consensus;
 pub mod cost_model;
 pub mod cost_tracker;
 pub mod cost_update_service;
+pub mod duplicate_repair_status;
 pub mod execute_cost_table;
 pub mod fetch_stage;
 pub mod fork_choice;

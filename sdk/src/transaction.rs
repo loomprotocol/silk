@@ -109,7 +109,7 @@ impl From<SanitizeError> for TransactionError {
 }
 
 /// An atomic transaction
-#[frozen_abi(digest = "2Kr1C1pRytLsmUbg8p2nLoZyrjrEQCriAYLTCYvwj1Fo")]
+#[frozen_abi(digest = "AAeVxvWiiotwxDLxKLxsfgkA6ndW74nVbaAEb6cwJYqR")]
 #[derive(Debug, PartialEq, Default, Eq, Clone, Serialize, Deserialize, AbiExample)]
 pub struct Transaction {
     /// A set of digital signatures of `account_keys`, `program_ids`, `recent_blockhash`, and `instructions`, signed by the first

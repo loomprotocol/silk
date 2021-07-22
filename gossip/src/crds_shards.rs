@@ -145,7 +145,7 @@ mod test {
         let label = value.label();
         let mut crds = Crds::default();
         crds.insert(value, timestamp()).unwrap();
-        crds.get(&label).cloned().unwrap()
+        crds.get::<&VersionedCrdsValue>(&label).cloned().unwrap()
     }
 
     // Returns true if the first mask_bits most significant bits of hash is the

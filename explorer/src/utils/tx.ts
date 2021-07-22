@@ -157,6 +157,8 @@ export function programLabel(
   if (programName && PROGRAM_DEPLOYMENTS[programName].includes(cluster)) {
     return programName;
   }
+
+  return LOADER_IDS[address];
 }
 
 export function tokenLabel(
@@ -179,7 +181,6 @@ export function addressLabel(
 ): string | undefined {
   return (
     programLabel(address, cluster) ||
-    LOADER_IDS[address] ||
     SYSVAR_IDS[address] ||
     SYSVAR_ID[address] ||
     tokenLabel(address, tokenRegistry) ||

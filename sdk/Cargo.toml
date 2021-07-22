@@ -56,7 +56,7 @@ hex = "0.4.3"
 hmac = "0.11.0"
 itertools =  "0.10.1"
 lazy_static = "1.4.0"
-libsecp256k1 = { version = "0.5.0", optional = true }
+libsecp256k1 = { version = "0.6.0", optional = true }
 log = "0.4.14"
 memmap2 = { version = "0.3.0", optional = true }
 num-derive = "0.3"

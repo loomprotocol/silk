@@ -119,7 +119,7 @@ pub struct Tower {
     last_vote_tx_blockhash: Hash,
     last_timestamp: BlockTimestamp,
     #[serde(skip)]
-    ledger_path: PathBuf,
+    pub(crate) ledger_path: PathBuf,
     #[serde(skip)]
     path: PathBuf,
     #[serde(skip)]
@@ -175,7 +175,7 @@ impl Tower {
         tower
     }
 
-    pub(crate) fn set_identity(&mut self, node_pubkey: Pubkey) {
+    fn set_identity(&mut self, node_pubkey: Pubkey) {
         let path = Self::get_filename(&self.ledger_path, &node_pubkey);
         let tmp_path = Self::get_tmp_filename(&path);
         self.node_pubkey = node_pubkey;

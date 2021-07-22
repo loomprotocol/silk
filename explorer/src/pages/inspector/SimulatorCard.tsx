@@ -230,6 +230,13 @@ function useSimulator(message: Message) {
               }
               depth--;
             } else {
+              if (depth === 0) {
+                instructionLogs.push({
+                  logs: [],
+                  failed: false,
+                });
+                depth++;
+              }
               // system transactions don't start with "Program log:"
               instructionLogs[instructionLogs.length - 1].logs.push({
                 prefix: prefixBuilder(depth),
@@ -239,6 +246,15 @@ function useSimulator(message: Message) {
             }
           }
         });
+
+        // If the instruction's simulation returned an error without any logs then add an empty log entry for Runtime error
+        // For example BpfUpgradableLoader fails without returning any logs for Upgrade instruction with buffer that doesn't exist
+        if (instructionError && instructionLogs.length === 0) {
+          instructionLogs.push({
+            logs: [],
+            failed: true,
+          });
+        }
 
         if (
           instructionError &&

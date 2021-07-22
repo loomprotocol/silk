@@ -1,3 +1,5 @@
+//! The standard [`RpcSender`] over HTTP.
+
 use {
     crate::{
         client_error::Result,
@@ -28,11 +30,19 @@ pub struct HttpSender {
     request_id: AtomicU64,
 }
 
+/// The standard [`RpcSender`] over HTTP.
 impl HttpSender {
+    /// Create an HTTP RPC sender.
+    ///
+    /// The URL is an HTTP URL, usually for port 8899, as in
+    /// "http://localhost:8899". The sender has a default timeout of 30 seconds.
     pub fn new(url: String) -> Self {
         Self::new_with_timeout(url, Duration::from_secs(30))
     }
 
+    /// Create an HTTP RPC sender.
+    ///
+    /// The URL is an HTTP URL, usually for port 8899.
     pub fn new_with_timeout(url: String, timeout: Duration) -> Self {
         // `reqwest::blocking::Client` panics if run in a tokio async context.  Shuttle the
         // request to a different tokio thread to avoid this

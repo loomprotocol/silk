@@ -1,5 +1,8 @@
+#![cfg(feature = "full")]
+
 use solana_sdk::{
     account::AccountSharedData,
+    compute_budget::ComputeBudget,
     instruction::{CompiledInstruction, Instruction, InstructionError},
     keyed_account::{create_keyed_accounts_unified, KeyedAccount},
     pubkey::Pubkey,
@@ -76,6 +79,8 @@ pub trait InvokeContext {
     /// Get this invocation's logger
     fn get_logger(&self) -> Rc<RefCell<dyn Logger>>;
     /// Get this invocation's compute budget
+    #[allow(deprecated)]
+    #[deprecated(since = "1.8.0", note = "please use `get_compute_budget` instead")]
     fn get_bpf_compute_budget(&self) -> &BpfComputeBudget;
     /// Get this invocation's compute meter
     fn get_compute_meter(&self) -> Rc<RefCell<dyn ComputeMeter>>;
@@ -100,6 +105,8 @@ pub trait InvokeContext {
     );
     /// Get sysvar data
     fn get_sysvar_data(&self, id: &Pubkey) -> Option<Rc<Vec<u8>>>;
+    /// Get this invocation's compute budget
+    fn get_compute_budget(&self) -> &ComputeBudget;
 }
 
 /// Convenience macro to log a message with an `Rc<RefCell<dyn Logger>>`
@@ -147,7 +154,8 @@ pub fn get_sysvar<T: Sysvar>(
     })
 }
 
-#[derive(Clone, Copy, Debug, AbiExample, PartialEq)]
+#[deprecated(since = "1.8.0", note = "please use `ComputeBudget` instead")]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BpfComputeBudget {
     /// Number of compute units that an instruction is allowed.  Compute units
     /// are consumed by program execution, resources they use, etc...
@@ -182,30 +190,60 @@ pub struct BpfComputeBudget {
     /// Optional program heap region size, if `None` then loader default
     pub heap_size: Option<usize>,
 }
-impl Default for BpfComputeBudget {
-    fn default() -> Self {
-        Self::new()
+#[allow(deprecated)]
+impl From<ComputeBudget> for BpfComputeBudget {
+    fn from(item: ComputeBudget) -> Self {
+        BpfComputeBudget {
+            max_units: item.max_units,
+            log_64_units: item.log_64_units,
+            create_program_address_units: item.create_program_address_units,
+            invoke_units: item.invoke_units,
+            max_invoke_depth: item.max_invoke_depth,
+            sha256_base_cost: item.sha256_base_cost,
+            sha256_byte_cost: item.sha256_byte_cost,
+            max_call_depth: item.max_call_depth,
+            stack_frame_size: item.stack_frame_size,
+            log_pubkey_units: item.log_pubkey_units,
+            max_cpi_instruction_size: item.max_cpi_instruction_size,
+            cpi_bytes_per_unit: item.cpi_bytes_per_unit,
+            sysvar_base_cost: item.sysvar_base_cost,
+            secp256k1_recover_cost: item.secp256k1_recover_cost,
+            heap_size: item.heap_size,
+        }
     }
 }
+#[allow(deprecated)]
+impl From<BpfComputeBudget> for ComputeBudget {
+    fn from(item: BpfComputeBudget) -> Self {
+        ComputeBudget {
+            max_units: item.max_units,
+            log_64_units: item.log_64_units,
+            create_program_address_units: item.create_program_address_units,
+            invoke_units: item.invoke_units,
+            max_invoke_depth: item.max_invoke_depth,
+            sha256_base_cost: item.sha256_base_cost,
+            sha256_byte_cost: item.sha256_byte_cost,
+            max_call_depth: item.max_call_depth,
+            stack_frame_size: item.stack_frame_size,
+            log_pubkey_units: item.log_pubkey_units,
+            max_cpi_instruction_size: item.max_cpi_instruction_size,
+            cpi_bytes_per_unit: item.cpi_bytes_per_unit,
+            sysvar_base_cost: item.sysvar_base_cost,
+            secp256k1_recover_cost: item.secp256k1_recover_cost,
+            heap_size: item.heap_size,
+        }
+    }
+}
+#[allow(deprecated)]
+impl Default for BpfComputeBudget {
+    fn default() -> Self {
+        ComputeBudget::default().into()
+    }
+}
+#[allow(deprecated)]
 impl BpfComputeBudget {
     pub fn new() -> Self {
-        BpfComputeBudget {
-            max_units: 200_000,
-            log_64_units: 100,
-            create_program_address_units: 1500,
-            invoke_units: 1000,
-            max_invoke_depth: 4,
-            sha256_base_cost: 85,
-            sha256_byte_cost: 1,
-            max_call_depth: 64,
-            stack_frame_size: 4_096,
-            log_pubkey_units: 100,
-            max_cpi_instruction_size: 1280, // IPv6 Min MTU size
-            cpi_bytes_per_unit: 250,        // ~50MB at 200,000 units
-            sysvar_base_cost: 100,
-            secp256k1_recover_cost: 25_000,
-            heap_size: None,
-        }
+        BpfComputeBudget::default()
     }
 }
 
@@ -336,9 +374,12 @@ impl Logger for MockLogger {
     }
 }
 
+#[allow(deprecated)]
 pub struct MockInvokeContext<'a> {
     pub invoke_stack: Vec<InvokeContextStackFrame<'a>>,
     pub logger: MockLogger,
+    pub compute_budget: ComputeBudget,
+    #[allow(deprecated)]
     pub bpf_compute_budget: BpfComputeBudget,
     pub compute_meter: MockComputeMeter,
     pub programs: Vec<(Pubkey, ProcessInstructionWithContext)>,
@@ -348,11 +389,13 @@ pub struct MockInvokeContext<'a> {
 }
 impl<'a> MockInvokeContext<'a> {
     pub fn new(keyed_accounts: Vec<KeyedAccount<'a>>) -> Self {
-        let bpf_compute_budget = BpfComputeBudget::default();
+        let compute_budget = ComputeBudget::default();
         let mut invoke_context = MockInvokeContext {
-            invoke_stack: Vec::with_capacity(bpf_compute_budget.max_invoke_depth),
+            invoke_stack: Vec::with_capacity(compute_budget.max_invoke_depth),
             logger: MockLogger::default(),
-            bpf_compute_budget,
+            compute_budget,
+            #[allow(deprecated)]
+            bpf_compute_budget: compute_budget.into(),
             compute_meter: MockComputeMeter {
                 remaining: std::i64::MAX as u64,
             },
@@ -442,7 +485,9 @@ impl<'a> InvokeContext for MockInvokeContext<'a> {
     fn get_logger(&self) -> Rc<RefCell<dyn Logger>> {
         Rc::new(RefCell::new(self.logger.clone()))
     }
+    #[allow(deprecated)]
     fn get_bpf_compute_budget(&self) -> &BpfComputeBudget {
+        #[allow(deprecated)]
         &self.bpf_compute_budget
     }
     fn get_compute_meter(&self) -> Rc<RefCell<dyn ComputeMeter>> {
@@ -476,5 +521,8 @@ impl<'a> InvokeContext for MockInvokeContext<'a> {
         self.sysvars
             .iter()
             .find_map(|(key, sysvar)| if id == key { sysvar.clone() } else { None })
+    }
+    fn get_compute_budget(&self) -> &ComputeBudget {
+        &self.compute_budget
     }
 }

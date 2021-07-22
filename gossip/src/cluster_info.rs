@@ -257,7 +257,7 @@ pub fn make_accounts_hashes_message(
 pub(crate) type Ping = ping_pong::Ping<[u8; GOSSIP_PING_TOKEN_SIZE]>;
 
 // TODO These messages should go through the gpu pipeline for spam filtering
-#[frozen_abi(digest = "GANv3KVkTYF84kmg1bAuWEZd9MaiYzPquuu13hup3379")]
+#[frozen_abi(digest = "4khbdefBamDC8XpdahkW4bzkGX6N5c8PcHp3kBXJGg46")]
 #[derive(Serialize, Deserialize, Debug, AbiEnumVisitor, AbiExample)]
 #[allow(clippy::large_enum_variant)]
 pub(crate) enum Protocol {
@@ -628,7 +628,7 @@ impl ClusterInfo {
         F: FnOnce(&ContactInfo) -> Y,
     {
         let gossip_crds = self.gossip.crds.read().unwrap();
-        gossip_crds.get_contact_info(*id).map(map)
+        gossip_crds.get(*id).map(map)
     }
 
     pub fn lookup_contact_info_by_gossip_addr(
@@ -653,8 +653,8 @@ impl ClusterInfo {
         let label = CrdsValueLabel::EpochSlots(ix, self_pubkey);
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
-            .get(&label)
-            .and_then(|v| v.value.epoch_slots())
+            .get::<&CrdsValue>(&label)
+            .and_then(|v| v.epoch_slots())
             .cloned()
             .unwrap_or_else(|| EpochSlots::new(self_pubkey, timestamp()))
     }
@@ -816,7 +816,7 @@ impl ClusterInfo {
         let last = {
             let gossip_crds = self.gossip.crds.read().unwrap();
             gossip_crds
-                .get_lowest_slot(self_pubkey)
+                .get::<&LowestSlot>(self_pubkey)
                 .map(|x| x.lowest)
                 .unwrap_or_default()
         };
@@ -843,7 +843,7 @@ impl ClusterInfo {
             (0..crds_value::MAX_EPOCH_SLOTS)
                 .filter_map(|ix| {
                     let label = CrdsValueLabel::EpochSlots(ix, self_pubkey);
-                    let epoch_slots = gossip_crds.get(&label)?.value.epoch_slots()?;
+                    let epoch_slots = gossip_crds.get::<&CrdsValue>(&label)?.epoch_slots()?;
                     let first_slot = epoch_slots.first_slot()?;
                     Some((epoch_slots.wallclock, first_slot, ix))
                 })
@@ -985,9 +985,9 @@ impl ClusterInfo {
             (0..MAX_LOCKOUT_HISTORY as u8)
                 .filter_map(|ix| {
                     let vote = CrdsValueLabel::Vote(ix, self_pubkey);
-                    let vote = gossip_crds.get(&vote)?;
+                    let vote: &CrdsData = gossip_crds.get(&vote)?;
                     num_crds_votes += 1;
-                    match &vote.value.data {
+                    match &vote {
                         CrdsData::Vote(_, vote) if should_evict_vote(vote) => {
                             Some((vote.wallclock, ix))
                         }
@@ -1009,8 +1009,8 @@ impl ClusterInfo {
                 self.time_gossip_read_lock("gossip_read_push_vote", &self.stats.push_vote_read);
             (0..MAX_LOCKOUT_HISTORY as u8).find(|ix| {
                 let vote = CrdsValueLabel::Vote(*ix, self_pubkey);
-                if let Some(vote) = gossip_crds.get(&vote) {
-                    match &vote.value.data {
+                if let Some(vote) = gossip_crds.get::<&CrdsData>(&vote) {
+                    match &vote {
                         CrdsData::Vote(_, prev_vote) => match prev_vote.slot() {
                             Some(prev_vote_slot) => prev_vote_slot == vote_slot,
                             None => {
@@ -1084,8 +1084,8 @@ impl ClusterInfo {
         F: FnOnce(&Vec<(Slot, Hash)>) -> Y,
     {
         self.time_gossip_read_lock("get_accounts_hash", &self.stats.get_accounts_hash)
-            .get(&CrdsValueLabel::AccountsHashes(*pubkey))
-            .map(|x| &x.value.accounts_hash().unwrap().hashes)
+            .get::<&CrdsValue>(&CrdsValueLabel::AccountsHashes(*pubkey))
+            .map(|x| &x.accounts_hash().unwrap().hashes)
             .map(map)
     }
 
@@ -1094,10 +1094,8 @@ impl ClusterInfo {
         F: FnOnce(&Vec<(Slot, Hash)>) -> Y,
     {
         let gossip_crds = self.gossip.crds.read().unwrap();
-        gossip_crds
-            .get(&CrdsValueLabel::SnapshotHashes(*pubkey))
-            .map(|x| &x.value.snapshot_hash().unwrap().hashes)
-            .map(map)
+        let hashes = &gossip_crds.get::<&SnapshotHash>(*pubkey)?.hashes;
+        Some(map(hashes))
     }
 
     /// Returns epoch-slots inserted since the given cursor.
@@ -1120,12 +1118,10 @@ impl ClusterInfo {
 
     pub fn get_node_version(&self, pubkey: &Pubkey) -> Option<solana_version::Version> {
         let gossip_crds = self.gossip.crds.read().unwrap();
-        let version = gossip_crds.get(&CrdsValueLabel::Version(*pubkey));
-        if let Some(version) = version.and_then(|v| v.value.version()) {
+        if let Some(version) = gossip_crds.get::<&Version>(*pubkey) {
             return Some(version.version.clone());
         }
-        let version = gossip_crds.get(&CrdsValueLabel::LegacyVersion(*pubkey))?;
-        let version = version.value.legacy_version()?;
+        let version: &crds_value::LegacyVersion = gossip_crds.get(*pubkey)?;
         Some(version.version.clone().into())
     }
 
@@ -1198,7 +1194,7 @@ impl ClusterInfo {
                     && node.shred_version == self_shred_version
                     && ContactInfo::is_valid_tvu_address(&node.tvu)
                     && ContactInfo::is_valid_address(&node.serve_repair)
-                    && match gossip_crds.get_lowest_slot(node.id) {
+                    && match gossip_crds.get::<&LowestSlot>(node.id) {
                         None => true, // fallback to legacy behavior
                         Some(lowest_slot) => lowest_slot.lowest <= slot,
                     }
@@ -1446,7 +1442,7 @@ impl ClusterInfo {
             push_messages
                 .into_iter()
                 .filter_map(|(pubkey, messages)| {
-                    let peer = gossip_crds.get_contact_info(pubkey)?;
+                    let peer: &ContactInfo = gossip_crds.get(pubkey)?;
                     Some((peer.gossip, messages))
                 })
                 .collect()
@@ -2197,7 +2193,7 @@ impl ClusterInfo {
                     .into_par_iter()
                     .with_min_len(256)
                     .filter_map(|(from, prunes)| {
-                        let peer = gossip_crds.get_contact_info(from)?;
+                        let peer: &ContactInfo = gossip_crds.get(from)?;
                         let mut prune_data = PruneData {
                             pubkey: self_pubkey,
                             prunes,
@@ -3294,7 +3290,7 @@ mod tests {
         let label = CrdsValueLabel::ContactInfo(d.id);
         cluster_info.insert_info(d);
         let gossip_crds = cluster_info.gossip.crds.read().unwrap();
-        assert!(gossip_crds.get(&label).is_some());
+        assert!(gossip_crds.get::<&CrdsValue>(&label).is_some());
     }
 
     fn assert_in_range(x: u16, range: (u16, u16)) {
@@ -3559,7 +3555,7 @@ mod tests {
             let gossip_crds = cluster_info.gossip.crds.read().unwrap();
             let mut vote_slots = HashSet::new();
             for label in labels {
-                match &gossip_crds.get(&label).unwrap().value.data {
+                match &gossip_crds.get::<&CrdsData>(&label).unwrap() {
                     CrdsData::Vote(_, vote) => {
                         assert!(vote_slots.insert(vote.slot().unwrap()));
                     }

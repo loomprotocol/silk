@@ -36,7 +36,7 @@ thiserror = "1.0"
 
 [target.'cfg(not(target_arch = "bpf"))'.dependencies]
 curve25519-dalek = "3.0.0"
-libsecp256k1 = "0.5.0"
+libsecp256k1 = "0.6.0"
 rand = "0.7.0"
 solana-logger = { path = "../../logger", version = "=1.8.0" }
 

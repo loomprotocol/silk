@@ -58,6 +58,8 @@ use std::{
     },
     time::Instant,
 };
+
+use tempfile::TempDir;
 use thiserror::Error;
 use trees::{Tree, TreeWalk};
 
@@ -3793,6 +3795,19 @@ macro_rules! get_tmp_ledger_path {
     () => {
         $crate::blockstore::get_ledger_path_from_name($crate::tmp_ledger_name!())
     };
+}
+
+#[macro_export]
+macro_rules! get_tmp_ledger_path_auto_delete {
+    () => {
+        $crate::blockstore::get_ledger_path_from_name_auto_delete($crate::tmp_ledger_name!())
+    };
+}
+
+pub fn get_ledger_path_from_name_auto_delete(name: &str) -> TempDir {
+    let path = get_ledger_path_from_name(name);
+    fs::create_dir_all(&path).unwrap();
+    TempDir::new_in(path).unwrap()
 }
 
 pub fn get_ledger_path_from_name(name: &str) -> PathBuf {

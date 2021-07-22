@@ -197,7 +197,7 @@ pub fn bind_syscall_context_objects<'a>(
     invoke_context: &'a mut dyn InvokeContext,
     heap: AlignedMemory,
 ) -> Result<(), EbpfError<BpfError>> {
-    let bpf_compute_budget = invoke_context.get_bpf_compute_budget();
+    let compute_budget = invoke_context.get_compute_budget();
     let enforce_aligned_host_addrs =
         invoke_context.is_feature_active(&enforce_aligned_host_addrs::id());
 
@@ -223,7 +223,7 @@ pub fn bind_syscall_context_objects<'a>(
     )?;
     vm.bind_syscall_context_object(
         Box::new(SyscallLogU64 {
-            cost: bpf_compute_budget.log_64_units,
+            cost: compute_budget.log_64_units,
             compute_meter: invoke_context.get_compute_meter(),
             logger: invoke_context.get_logger(),
         }),
@@ -241,7 +241,7 @@ pub fn bind_syscall_context_objects<'a>(
 
     vm.bind_syscall_context_object(
         Box::new(SyscallLogPubkey {
-            cost: bpf_compute_budget.log_pubkey_units,
+            cost: compute_budget.log_pubkey_units,
             compute_meter: invoke_context.get_compute_meter(),
             logger: invoke_context.get_logger(),
             loader_id,
@@ -252,7 +252,7 @@ pub fn bind_syscall_context_objects<'a>(
 
     vm.bind_syscall_context_object(
         Box::new(SyscallCreateProgramAddress {
-            cost: bpf_compute_budget.create_program_address_units,
+            cost: compute_budget.create_program_address_units,
             compute_meter: invoke_context.get_compute_meter(),
             loader_id,
             enforce_aligned_host_addrs,
@@ -262,7 +262,7 @@ pub fn bind_syscall_context_objects<'a>(
 
     vm.bind_syscall_context_object(
         Box::new(SyscallTryFindProgramAddress {
-            cost: bpf_compute_budget.create_program_address_units,
+            cost: compute_budget.create_program_address_units,
             compute_meter: invoke_context.get_compute_meter(),
             loader_id,
             enforce_aligned_host_addrs,
@@ -272,8 +272,8 @@ pub fn bind_syscall_context_objects<'a>(
 
     vm.bind_syscall_context_object(
         Box::new(SyscallSha256 {
-            sha256_base_cost: bpf_compute_budget.sha256_base_cost,
-            sha256_byte_cost: bpf_compute_budget.sha256_byte_cost,
+            sha256_base_cost: compute_budget.sha256_base_cost,
+            sha256_byte_cost: compute_budget.sha256_byte_cost,
             compute_meter: invoke_context.get_compute_meter(),
             loader_id,
             enforce_aligned_host_addrs,
@@ -285,8 +285,8 @@ pub fn bind_syscall_context_objects<'a>(
         vm,
         invoke_context.is_feature_active(&keccak256_syscall_enabled::id()),
         Box::new(SyscallKeccak256 {
-            base_cost: bpf_compute_budget.sha256_base_cost,
-            byte_cost: bpf_compute_budget.sha256_byte_cost,
+            base_cost: compute_budget.sha256_base_cost,
+            byte_cost: compute_budget.sha256_byte_cost,
             compute_meter: invoke_context.get_compute_meter(),
             loader_id,
         }),
@@ -296,7 +296,7 @@ pub fn bind_syscall_context_objects<'a>(
         vm,
         invoke_context.is_feature_active(&memory_ops_syscalls::id()),
         Box::new(SyscallMemcpy {
-            cost: invoke_context.get_bpf_compute_budget().cpi_bytes_per_unit,
+            cost: invoke_context.get_compute_budget().cpi_bytes_per_unit,
             compute_meter: invoke_context.get_compute_meter(),
             loader_id,
         }),
@@ -305,7 +305,7 @@ pub fn bind_syscall_context_objects<'a>(
         vm,
         invoke_context.is_feature_active(&memory_ops_syscalls::id()),
         Box::new(SyscallMemmove {
-            cost: invoke_context.get_bpf_compute_budget().cpi_bytes_per_unit,
+            cost: invoke_context.get_compute_budget().cpi_bytes_per_unit,
             compute_meter: invoke_context.get_compute_meter(),
             loader_id,
         }),
@@ -314,7 +314,7 @@ pub fn bind_syscall_context_objects<'a>(
         vm,
         invoke_context.is_feature_active(&memory_ops_syscalls::id()),
         Box::new(SyscallMemcmp {
-            cost: invoke_context.get_bpf_compute_budget().cpi_bytes_per_unit,
+            cost: invoke_context.get_compute_budget().cpi_bytes_per_unit,
             compute_meter: invoke_context.get_compute_meter(),
             loader_id,
         }),
@@ -323,7 +323,7 @@ pub fn bind_syscall_context_objects<'a>(
         vm,
         invoke_context.is_feature_active(&memory_ops_syscalls::id()),
         Box::new(SyscallMemset {
-            cost: invoke_context.get_bpf_compute_budget().cpi_bytes_per_unit,
+            cost: invoke_context.get_compute_budget().cpi_bytes_per_unit,
             compute_meter: invoke_context.get_compute_meter(),
             loader_id,
         }),
@@ -332,8 +332,8 @@ pub fn bind_syscall_context_objects<'a>(
         vm,
         invoke_context.is_feature_active(&blake3_syscall_enabled::id()),
         Box::new(SyscallBlake3 {
-            base_cost: bpf_compute_budget.sha256_base_cost,
-            byte_cost: bpf_compute_budget.sha256_byte_cost,
+            base_cost: compute_budget.sha256_base_cost,
+            byte_cost: compute_budget.sha256_byte_cost,
             compute_meter: invoke_context.get_compute_meter(),
             loader_id,
         }),
@@ -343,7 +343,7 @@ pub fn bind_syscall_context_objects<'a>(
         vm,
         invoke_context.is_feature_active(&secp256k1_recover_syscall_enabled::id()),
         Box::new(SyscallSecp256k1Recover {
-            cost: bpf_compute_budget.secp256k1_recover_cost,
+            cost: compute_budget.secp256k1_recover_cost,
             compute_meter: invoke_context.get_compute_meter(),
             loader_id,
             libsecp256k1_0_5_upgrade_enabled: invoke_context
@@ -1043,9 +1043,9 @@ fn get_sysvar<T: std::fmt::Debug + Sysvar + SysvarId>(
         .try_borrow()
         .map_err(|_| SyscallError::InvokeContextBorrowFailed)?;
 
-    invoke_context.get_compute_meter().consume(
-        invoke_context.get_bpf_compute_budget().sysvar_base_cost + size_of::<T>() as u64,
-    )?;
+    invoke_context
+        .get_compute_meter()
+        .consume(invoke_context.get_compute_budget().sysvar_base_cost + size_of::<T>() as u64)?;
     let var = translate_type_mut::<T>(
         memory_mapping,
         var_addr,
@@ -1689,8 +1689,7 @@ impl<'a> SyscallInvokeSigned<'a> for SyscallInvokeSignedRust<'a> {
 
                 if invoke_context.is_feature_active(&cpi_data_cost::id()) {
                     invoke_context.get_compute_meter().consume(
-                        data.len() as u64
-                            / invoke_context.get_bpf_compute_budget().cpi_bytes_per_unit,
+                        data.len() as u64 / invoke_context.get_compute_budget().cpi_bytes_per_unit,
                     )?;
                 }
 
@@ -2009,8 +2008,7 @@ impl<'a> SyscallInvokeSigned<'a> for SyscallInvokeSignedC<'a> {
 
             if invoke_context.is_feature_active(&cpi_data_cost::id()) {
                 invoke_context.get_compute_meter().consume(
-                    account_info.data_len
-                        / invoke_context.get_bpf_compute_budget().cpi_bytes_per_unit,
+                    account_info.data_len / invoke_context.get_compute_budget().cpi_bytes_per_unit,
                 )?;
             }
 
@@ -2213,9 +2211,7 @@ fn check_instruction_size(
     let size = num_accounts
         .saturating_mul(size_of::<AccountMeta>())
         .saturating_add(data_len);
-    let max_size = invoke_context
-        .get_bpf_compute_budget()
-        .max_cpi_instruction_size;
+    let max_size = invoke_context.get_compute_budget().max_cpi_instruction_size;
     if size > max_size {
         return Err(SyscallError::InstructionTooLarge(size, max_size).into());
     }
@@ -2226,11 +2222,7 @@ fn check_account_infos(
     len: usize,
     invoke_context: &Ref<&mut dyn InvokeContext>,
 ) -> Result<(), EbpfError<BpfError>> {
-    if len * size_of::<Pubkey>()
-        > invoke_context
-            .get_bpf_compute_budget()
-            .max_cpi_instruction_size
-    {
+    if len * size_of::<Pubkey>() > invoke_context.get_compute_budget().max_cpi_instruction_size {
         // Cap the number of account_infos a caller can pass to approximate
         // maximum that accounts that could be passed in an instruction
         return Err(SyscallError::TooManyAccounts.into());
@@ -2305,7 +2297,7 @@ fn call<'a>(
 
         invoke_context
             .get_compute_meter()
-            .consume(invoke_context.get_bpf_compute_budget().invoke_units)?;
+            .consume(invoke_context.get_compute_budget().invoke_units)?;
 
         let enforce_aligned_host_addrs =
             invoke_context.is_feature_active(&enforce_aligned_host_addrs::id());

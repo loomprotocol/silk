@@ -1,3 +1,5 @@
+#![cfg(feature = "full")]
+
 use crate::{
     account::{ReadableAccount, WritableAccount},
     account_utils::State as AccountUtilsState,

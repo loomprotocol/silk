@@ -34,7 +34,6 @@ use solana_sdk::{
     bpf_loader, bpf_loader_deprecated, bpf_loader_upgradeable,
     client::SyncClient,
     clock::MAX_PROCESSING_AGE,
-    compute_budget,
     entrypoint::{MAX_PERMITTED_DATA_INCREASE, SUCCESS},
     instruction::{AccountMeta, CompiledInstruction, Instruction, InstructionError},
     keyed_account::KeyedAccount,
@@ -1231,7 +1230,7 @@ fn test_program_bpf_ro_modify() {
 #[cfg(feature = "bpf_rust")]
 #[test]
 fn test_program_bpf_call_depth() {
-    use solana_sdk::process_instruction::BpfComputeBudget;
+    use solana_sdk::compute_budget::ComputeBudget;
 
     solana_logger::setup();
 
@@ -1253,7 +1252,7 @@ fn test_program_bpf_call_depth() {
 
     let instruction = Instruction::new_with_bincode(
         program_id,
-        &(BpfComputeBudget::default().max_call_depth - 1),
+        &(ComputeBudget::default().max_call_depth - 1),
         vec![],
     );
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
@@ -1261,7 +1260,7 @@ fn test_program_bpf_call_depth() {
 
     let instruction = Instruction::new_with_bincode(
         program_id,
-        &BpfComputeBudget::default().max_call_depth,
+        &ComputeBudget::default().max_call_depth,
         vec![],
     );
     let result = bank_client.send_and_confirm_instruction(&mint_keypair, instruction);
@@ -1290,7 +1289,7 @@ fn test_program_bpf_compute_budget() {
     );
     let message = Message::new(
         &[
-            compute_budget::request_units(1),
+            solana_sdk::compute_budget::ComputeBudgetInstruction::request_units(1),
             Instruction::new_with_bincode(program_id, &0, vec![]),
         ],
         Some(&mint_keypair.pubkey()),

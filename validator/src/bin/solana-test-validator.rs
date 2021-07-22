@@ -513,6 +513,7 @@ fn main() {
             validator_exit: genesis.validator_exit.clone(),
             authorized_voter_keypairs: genesis.authorized_voter_keypairs.clone(),
             cluster_info: admin_service_cluster_info.clone(),
+            tower_path: ledger_path.clone(),
         },
     );
     let dashboard = if output == Output::Dashboard {

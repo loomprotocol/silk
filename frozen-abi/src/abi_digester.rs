@@ -49,6 +49,17 @@ impl DigestError {
 
 const INDENT_WIDTH: usize = 4;
 
+pub(crate) fn shorten_serialize_with(type_name: &str) -> &str {
+    // Fully qualified type names for the generated `__SerializeWith` types are very
+    // long and do not add extra value to the digest. They also cause the digest
+    // to change when a struct is moved to an inner module.
+    if type_name.ends_with("__SerializeWith") {
+        "__SerializeWith"
+    } else {
+        type_name
+    }
+}
+
 impl AbiDigester {
     pub fn create() -> Self {
         AbiDigester {
@@ -164,7 +175,8 @@ impl AbiDigester {
         key: Sstr,
         v: &T,
     ) -> Result<(), DigestError> {
-        self.update_with_string(format!("field {}: {}", key, type_name::<T>()));
+        let field_type_name = shorten_serialize_with(type_name::<T>());
+        self.update_with_string(format!("field {}: {}", key, field_type_name));
         self.create_child()?
             .digest_data(v)
             .map(|_| ())

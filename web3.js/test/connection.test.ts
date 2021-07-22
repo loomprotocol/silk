@@ -155,6 +155,76 @@ describe('Connection', () => {
       .be.null;
   });
 
+  it('get multiple accounts info', async () => {
+    const account1 = Keypair.generate();
+    const account2 = Keypair.generate();
+
+    {
+      await helpers.airdrop({
+        connection,
+        address: account1.publicKey,
+        amount: LAMPORTS_PER_SOL,
+      });
+
+      await helpers.airdrop({
+        connection,
+        address: account2.publicKey,
+        amount: LAMPORTS_PER_SOL,
+      });
+    }
+
+    const value = [
+      {
+        owner: '11111111111111111111111111111111',
+        lamports: LAMPORTS_PER_SOL,
+        data: ['', 'base64'],
+        executable: false,
+        rentEpoch: 0,
+      },
+      {
+        owner: '11111111111111111111111111111111',
+        lamports: LAMPORTS_PER_SOL,
+        data: ['', 'base64'],
+        executable: false,
+        rentEpoch: 0,
+      },
+    ];
+
+    await mockRpcResponse({
+      method: 'getMultipleAccounts',
+      params: [
+        [account1.publicKey.toBase58(), account2.publicKey.toBase58()],
+        {encoding: 'base64'},
+      ],
+      value: value,
+      withContext: true,
+    });
+
+    const res = await connection.getMultipleAccountsInfo(
+      [account1.publicKey, account2.publicKey],
+      'confirmed',
+    );
+
+    const expectedValue = [
+      {
+        owner: new PublicKey('11111111111111111111111111111111'),
+        lamports: LAMPORTS_PER_SOL,
+        data: Buffer.from([]),
+        executable: false,
+        rentEpoch: 0,
+      },
+      {
+        owner: new PublicKey('11111111111111111111111111111111'),
+        lamports: LAMPORTS_PER_SOL,
+        data: Buffer.from([]),
+        executable: false,
+        rentEpoch: 0,
+      },
+    ];
+
+    expect(res).to.eql(expectedValue);
+  });
+
   it('get program accounts', async () => {
     const account0 = Keypair.generate();
     const account1 = Keypair.generate();

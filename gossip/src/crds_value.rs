@@ -584,52 +584,16 @@ impl CrdsValue {
         }
     }
 
-    #[cfg(test)]
-    fn vote(&self) -> Option<&Vote> {
-        match &self.data {
-            CrdsData::Vote(_, vote) => Some(vote),
-            _ => None,
-        }
-    }
-
-    pub fn lowest_slot(&self) -> Option<&LowestSlot> {
-        match &self.data {
-            CrdsData::LowestSlot(_, slots) => Some(slots),
-            _ => None,
-        }
-    }
-
-    pub fn snapshot_hash(&self) -> Option<&SnapshotHash> {
-        match &self.data {
-            CrdsData::SnapshotHashes(slots) => Some(slots),
-            _ => None,
-        }
-    }
-
-    pub fn accounts_hash(&self) -> Option<&SnapshotHash> {
+    pub(crate) fn accounts_hash(&self) -> Option<&SnapshotHash> {
         match &self.data {
             CrdsData::AccountsHashes(slots) => Some(slots),
             _ => None,
         }
     }
 
-    pub fn epoch_slots(&self) -> Option<&EpochSlots> {
+    pub(crate) fn epoch_slots(&self) -> Option<&EpochSlots> {
         match &self.data {
             CrdsData::EpochSlots(_, slots) => Some(slots),
-            _ => None,
-        }
-    }
-
-    pub fn legacy_version(&self) -> Option<&LegacyVersion> {
-        match &self.data {
-            CrdsData::LegacyVersion(legacy_version) => Some(legacy_version),
-            _ => None,
-        }
-    }
-
-    pub fn version(&self) -> Option<&Version> {
-        match &self.data {
-            CrdsData::Version(version) => Some(version),
             _ => None,
         }
     }
@@ -641,7 +605,7 @@ impl CrdsValue {
 
     /// Returns true if, regardless of prunes, this crds-value
     /// should be pushed to the receiving node.
-    pub fn should_force_push(&self, peer: &Pubkey) -> bool {
+    pub(crate) fn should_force_push(&self, peer: &Pubkey) -> bool {
         match &self.data {
             CrdsData::NodeInstance(node) => node.from == *peer,
             _ => false,
@@ -710,7 +674,10 @@ mod test {
             Vote::new(Pubkey::default(), test_tx(), 0),
         ));
         assert_eq!(v.wallclock(), 0);
-        let key = v.vote().unwrap().from;
+        let key = match &v.data {
+            CrdsData::Vote(_, vote) => vote.from,
+            _ => panic!(),
+        };
         assert_eq!(v.label(), CrdsValueLabel::Vote(0, key));
 
         let v = CrdsValue::new_unsigned(CrdsData::LowestSlot(
@@ -718,7 +685,10 @@ mod test {
             LowestSlot::new(Pubkey::default(), 0, 0),
         ));
         assert_eq!(v.wallclock(), 0);
-        let key = v.lowest_slot().unwrap().from;
+        let key = match &v.data {
+            CrdsData::LowestSlot(_, data) => data.from,
+            _ => panic!(),
+        };
         assert_eq!(v.label(), CrdsValueLabel::LowestSlot(key));
     }
 

@@ -9,6 +9,7 @@ const CoinGeckoClient = new CoinGecko();
 export enum CoingeckoStatus {
   Success,
   FetchFailed,
+  Loading,
 }
 
 export interface CoinInfo {
@@ -49,7 +50,12 @@ export function useCoinGecko(coinId?: string): CoinGeckoResult | undefined {
   React.useEffect(() => {
     let interval: NodeJS.Timeout | undefined;
     if (coinId) {
-      const getCoinInfo = () => {
+      const getCoinInfo = (refresh = false) => {
+        if (!refresh) {
+          setCoinInfo({
+            status: CoingeckoStatus.Loading,
+          });
+        }
         CoinGeckoClient.coins
           .fetch(coinId)
           .then((info: CoinInfoResult) => {
@@ -75,7 +81,7 @@ export function useCoinGecko(coinId?: string): CoinGeckoResult | undefined {
 
       getCoinInfo();
       interval = setInterval(() => {
-        getCoinInfo();
+        getCoinInfo(true);
       }, PRICE_REFRESH);
     }
     return () => {

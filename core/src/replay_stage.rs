@@ -640,7 +640,25 @@ impl ReplayStage {
                                 identity_keypair = cluster_info.keypair().clone();
                                 let my_old_pubkey = my_pubkey;
                                 my_pubkey = identity_keypair.pubkey();
-                                tower.set_identity(my_pubkey);
+
+                                // Load the new identity's tower
+                                tower = Tower::restore(&tower.ledger_path, &my_pubkey)
+                                    .and_then(|restored_tower| {
+                                        let root_bank = bank_forks.read().unwrap().root_bank();
+                                        let slot_history = root_bank.get_slot_history();
+                                        restored_tower.adjust_lockouts_after_replay(root_bank.slot(), &slot_history)
+                                    }).
+                                    unwrap_or_else(|err| {
+                                        // It's a fatal error if the tower is not present.  This is
+                                        // necessary to prevent the validator from violating
+                                        // lockouts for its new identity
+                                        error!("Failed to load tower for {}: {}", my_pubkey, err);
+                                        std::process::exit(1);
+                                    });
+
+                                // Ensure the validator can land votes with the new identity before
+                                // becoming leader
+                                has_new_vote_been_rooted = !wait_for_vote_to_start_leader;
                                 warn!("Identity changed from {} to {}", my_old_pubkey, my_pubkey);
                             }
 

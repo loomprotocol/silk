@@ -6,6 +6,7 @@ mod cluster_info_metrics;
 #[macro_use]
 pub mod contact_info;
 pub mod crds;
+pub mod crds_entry;
 pub mod crds_gossip;
 pub mod crds_gossip_error;
 pub mod crds_gossip_pull;

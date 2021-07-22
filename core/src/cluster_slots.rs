@@ -165,7 +165,7 @@ impl ClusterSlots {
             .collect()
     }
 
-    pub fn compute_weights_exclude_noncomplete(
+    pub fn compute_weights_exclude_nonfrozen(
         &self,
         slot: Slot,
         repair_peers: &[ContactInfo],
@@ -325,7 +325,7 @@ mod tests {
         // None of these validators have completed slot 9, so should
         // return nothing
         assert!(cs
-            .compute_weights_exclude_noncomplete(slot, &contact_infos)
+            .compute_weights_exclude_nonfrozen(slot, &contact_infos)
             .is_empty());
 
         // Give second validator max stake
@@ -345,7 +345,7 @@ mod tests {
         // max stake
         cs.insert_node_id(slot, contact_infos[0].id);
         assert_eq!(
-            cs.compute_weights_exclude_noncomplete(slot, &contact_infos),
+            cs.compute_weights_exclude_nonfrozen(slot, &contact_infos),
             vec![(1, 0)]
         );
     }

@@ -125,7 +125,7 @@ impl ClusterNodes<RetransmitStage> {
                 .unzip(),
         };
         let index: Vec<_> = {
-            let shuffle = weighted_shuffle(&weights, shred_seed);
+            let shuffle = weighted_shuffle(weights.into_iter(), shred_seed);
             shuffle.into_iter().map(|i| index[i]).collect()
         };
         let self_index = index

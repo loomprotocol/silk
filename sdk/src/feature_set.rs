@@ -195,6 +195,10 @@ pub mod tx_wide_compute_cap {
     solana_sdk::declare_id!("5ekBxc8itEnPv4NzGJtr8BVVQLNMQuLMNQQj7pHoLNZ9");
 }
 
+pub mod spl_token_v2_set_authority_fix {
+    solana_sdk::declare_id!("FToKNBYyiF4ky9s8WsmLBXHCht17Ek7RXaLZGHzzQhJ1");
+}
+
 lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
@@ -238,6 +242,7 @@ lazy_static! {
         (rent_for_sysvars::id(), "collect rent from accounts owned by sysvars"),
         (libsecp256k1_0_5_upgrade_enabled::id(), "upgrade libsecp256k1 to v0.5.0"),
         (tx_wide_compute_cap::id(), "Transaction wide compute cap"),
+        (spl_token_v2_set_authority_fix::id(), "spl-token set_authority fix"),
         /*************** ADD NEW FEATURES HERE ***************/
     ]
     .iter()

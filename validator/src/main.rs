@@ -2234,7 +2234,9 @@ pub fn main() {
 
     let mut validator_config = ValidatorConfig {
         require_tower: matches.is_present("require_tower"),
-        tower_path: value_t!(matches, "tower", PathBuf).ok(),
+        tower_path: value_t!(matches, "tower", PathBuf)
+            .ok()
+            .or_else(|| Some(ledger_path.clone())),
         dev_halt_at_slot: value_t!(matches, "dev_halt_at_slot", Slot).ok(),
         cuda: matches.is_present("cuda"),
         expected_genesis_hash: matches
@@ -2539,6 +2541,7 @@ pub fn main() {
             start_progress: start_progress.clone(),
             authorized_voter_keypairs: authorized_voter_keypairs.clone(),
             cluster_info: admin_service_cluster_info.clone(),
+            tower_path: validator_config.tower_path.clone().unwrap(),
         },
     );
 
