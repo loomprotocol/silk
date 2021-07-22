@@ -39,6 +39,7 @@ pub fn recv_mmsg(
 }
 
 #[cfg(target_os = "linux")]
+#[allow(clippy::uninit_assumed_init)]
 pub fn recv_mmsg(
     sock: &UdpSocket,
     packets: &mut [Packet],
