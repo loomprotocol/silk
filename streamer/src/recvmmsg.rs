@@ -7,7 +7,11 @@ use std::io;
 use std::net::UdpSocket;
 
 #[cfg(not(target_os = "linux"))]
-pub fn recv_mmsg(socket: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize, usize)> {
+pub fn recv_mmsg(
+    socket: &UdpSocket,
+    packets: &mut [Packet],
+    _timeo_ms: u64,
+) -> io::Result<(usize, usize)> {
     let mut i = 0;
     let count = cmp::min(NUM_RCVMMSGS, packets.len());
     let mut total_size = 0;
@@ -35,7 +39,11 @@ pub fn recv_mmsg(socket: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usiz
 }
 
 #[cfg(target_os = "linux")]
-pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize, usize)> {
+pub fn recv_mmsg(
+    sock: &UdpSocket,
+    packets: &mut [Packet],
+    timeo_ms: u64,
+) -> io::Result<(usize, usize)> {
     use libc::{
         c_void, iovec, mmsghdr, recvmmsg, sockaddr_in, socklen_t, timespec, MSG_WAITFORONE,
     };
@@ -44,7 +52,7 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize,
     use std::os::unix::io::AsRawFd;
 
     let mut hdrs: [mmsghdr; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
-    let mut iovs: [iovec; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
+    let mut iovs: [iovec; NUM_RCVMMSGS] = unsafe { mem::MaybeUninit::uninit().assume_init() };
     let mut addr: [sockaddr_in; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
     let addrlen = mem::size_of_val(&addr) as socklen_t;
 
@@ -62,8 +70,8 @@ pub fn recv_mmsg(sock: &UdpSocket, packets: &mut [Packet]) -> io::Result<(usize,
         hdrs[i].msg_hdr.msg_iovlen = 1;
     }
     let mut ts = timespec {
-        tv_sec: 1,
-        tv_nsec: 0,
+        tv_sec: 0,
+        tv_nsec: timeo_ms * 1_000_000,
     };
 
     let mut total_size = 0;
@@ -105,7 +113,7 @@ mod tests {
         }
 
         let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap().1;
+        let recv = recv_mmsg(&reader, &mut packets[..], 1_000).unwrap().1;
         assert_eq!(sent, recv);
         for packet in packets.iter().take(recv) {
             assert_eq!(packet.meta.size, PACKET_DATA_SIZE);
@@ -126,14 +134,14 @@ mod tests {
         }
 
         let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap().1;
+        let recv = recv_mmsg(&reader, &mut packets[..], 1_000).unwrap().1;
         assert_eq!(TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(recv) {
             assert_eq!(packet.meta.size, PACKET_DATA_SIZE);
             assert_eq!(packet.meta.addr(), saddr);
         }
 
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap().1;
+        let recv = recv_mmsg(&reader, &mut packets[..], 1_000).unwrap().1;
         assert_eq!(sent - TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(recv) {
             assert_eq!(packet.meta.size, PACKET_DATA_SIZE);
@@ -157,7 +165,7 @@ mod tests {
 
         let start = Instant::now();
         let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap().1;
+        let recv = recv_mmsg(&reader, &mut packets[..], 1_000).unwrap().1;
         assert_eq!(TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(recv) {
             assert_eq!(packet.meta.size, PACKET_DATA_SIZE);
@@ -165,7 +173,7 @@ mod tests {
         }
         reader.set_nonblocking(true).unwrap();
 
-        let _recv = recv_mmsg(&reader, &mut packets[..]);
+        let _recv = recv_mmsg(&reader, &mut packets[..], 1_000);
         assert!(start.elapsed().as_secs() < 5);
     }
 
@@ -194,7 +202,7 @@ mod tests {
 
         let mut packets = vec![Packet::default(); TEST_NUM_MSGS];
 
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap().1;
+        let recv = recv_mmsg(&reader, &mut packets[..], 1_000).unwrap().1;
         assert_eq!(TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(sent1) {
             assert_eq!(packet.meta.size, PACKET_DATA_SIZE);
@@ -205,7 +213,7 @@ mod tests {
             assert_eq!(packet.meta.addr(), saddr2);
         }
 
-        let recv = recv_mmsg(&reader, &mut packets[..]).unwrap().1;
+        let recv = recv_mmsg(&reader, &mut packets[..], 1_000).unwrap().1;
         assert_eq!(sent1 + sent2 - TEST_NUM_MSGS, recv);
         for packet in packets.iter().take(recv) {
             assert_eq!(packet.meta.size, PACKET_DATA_SIZE);
