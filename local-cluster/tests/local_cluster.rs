@@ -1642,25 +1642,15 @@ fn test_snapshot_download() {
     trace!("Waiting for snapshot");
     let (archive_filename, archive_snapshot_hash) =
         wait_for_next_snapshot(&cluster, snapshot_package_output_path);
-
     trace!("found: {:?}", archive_filename);
-    let validator_archive_path = snapshot_utils::build_snapshot_archive_path(
-        validator_snapshot_test_config
-            .snapshot_output_path
-            .path()
-            .to_path_buf(),
-        archive_snapshot_hash.0,
-        &archive_snapshot_hash.1,
-        ArchiveFormat::TarBzip2,
-    );
 
     // Download the snapshot, then boot a validator from it.
     download_snapshot(
         &cluster.entry_point_info.rpc,
-        &validator_archive_path,
+        validator_snapshot_test_config.snapshot_archives_dir.path(),
         archive_snapshot_hash,
         false,
-        snapshot_utils::DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
+        snapshot_utils::DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
         &mut None,
     )
     .unwrap();
@@ -1720,9 +1710,9 @@ fn test_snapshot_restart_tower() {
         wait_for_next_snapshot(&cluster, snapshot_package_output_path);
 
     // Copy archive to validator's snapshot output directory
-    let validator_archive_path = snapshot_utils::build_snapshot_archive_path(
+    let validator_archive_path = snapshot_utils::build_full_snapshot_archive_path(
         validator_snapshot_test_config
-            .snapshot_output_path
+            .snapshot_archives_dir
             .path()
             .to_path_buf(),
         archive_snapshot_hash.0,
@@ -1783,7 +1773,7 @@ fn test_snapshots_blockstore_floor() {
 
     let archive_info = loop {
         let archive =
-            snapshot_utils::get_highest_snapshot_archive_info(&snapshot_package_output_path);
+            snapshot_utils::get_highest_full_snapshot_archive_info(&snapshot_package_output_path);
         if archive.is_some() {
             trace!("snapshot exists");
             break archive.unwrap();
@@ -1792,17 +1782,17 @@ fn test_snapshots_blockstore_floor() {
     };
 
     // Copy archive to validator's snapshot output directory
-    let validator_archive_path = snapshot_utils::build_snapshot_archive_path(
+    let validator_archive_path = snapshot_utils::build_full_snapshot_archive_path(
         validator_snapshot_test_config
-            .snapshot_output_path
+            .snapshot_archives_dir
             .path()
             .to_path_buf(),
-        archive_info.slot,
-        &archive_info.hash,
+        *archive_info.slot(),
+        archive_info.hash(),
         ArchiveFormat::TarBzip2,
     );
-    fs::hard_link(archive_info.path, &validator_archive_path).unwrap();
-    let slot_floor = archive_info.slot;
+    fs::hard_link(archive_info.path(), &validator_archive_path).unwrap();
+    let slot_floor = *archive_info.slot();
 
     // Start up a new node from a snapshot
     let validator_stake = 5;
@@ -3284,19 +3274,25 @@ fn wait_for_next_snapshot(
         last_slot
     );
     loop {
-        if let Some(snapshot_archive_info) =
-            snapshot_utils::get_highest_snapshot_archive_info(snapshot_package_output_path)
+        if let Some(full_snapshot_archive_info) =
+            snapshot_utils::get_highest_full_snapshot_archive_info(snapshot_package_output_path)
         {
-            trace!("snapshot for slot {} exists", snapshot_archive_info.slot);
-            if snapshot_archive_info.slot >= last_slot {
+            trace!(
+                "full snapshot for slot {} exists",
+                full_snapshot_archive_info.slot()
+            );
+            if *full_snapshot_archive_info.slot() >= last_slot {
                 return (
-                    snapshot_archive_info.path,
-                    (snapshot_archive_info.slot, snapshot_archive_info.hash),
+                    full_snapshot_archive_info.path().clone(),
+                    (
+                        *full_snapshot_archive_info.slot(),
+                        *full_snapshot_archive_info.hash(),
+                    ),
                 );
             }
             trace!(
-                "snapshot slot {} < last_slot {}",
-                snapshot_archive_info.slot,
+                "full snapshot slot {} < last_slot {}",
+                full_snapshot_archive_info.slot(),
                 last_slot
             );
         }
@@ -3323,7 +3319,7 @@ fn generate_account_paths(num_account_paths: usize) -> (Vec<TempDir>, Vec<PathBu
 
 struct SnapshotValidatorConfig {
     _snapshot_dir: TempDir,
-    snapshot_output_path: TempDir,
+    snapshot_archives_dir: TempDir,
     account_storage_dirs: Vec<TempDir>,
     validator_config: ValidatorConfig,
 }
@@ -3334,14 +3330,14 @@ fn setup_snapshot_validator_config(
 ) -> SnapshotValidatorConfig {
     // Create the snapshot config
     let snapshot_dir = tempfile::tempdir_in(farf_dir()).unwrap();
-    let snapshot_output_path = tempfile::tempdir_in(farf_dir()).unwrap();
+    let snapshot_archives_dir = tempfile::tempdir_in(farf_dir()).unwrap();
     let snapshot_config = SnapshotConfig {
         snapshot_interval_slots,
-        snapshot_package_output_path: PathBuf::from(snapshot_output_path.path()),
-        snapshot_path: PathBuf::from(snapshot_dir.path()),
+        snapshot_package_output_path: snapshot_archives_dir.path().to_path_buf(),
+        snapshot_path: snapshot_dir.path().to_path_buf(),
         archive_format: ArchiveFormat::TarBzip2,
         snapshot_version: snapshot_utils::SnapshotVersion::default(),
-        maximum_snapshots_to_retain: snapshot_utils::DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
+        maximum_snapshots_to_retain: snapshot_utils::DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
     };
 
     // Create the account paths
@@ -3357,7 +3353,7 @@ fn setup_snapshot_validator_config(
 
     SnapshotValidatorConfig {
         _snapshot_dir: snapshot_dir,
-        snapshot_output_path,
+        snapshot_archives_dir,
         account_storage_dirs,
         validator_config,
     }

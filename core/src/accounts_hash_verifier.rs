@@ -99,6 +99,7 @@ impl AccountsHashVerifier {
         let accounts_package = solana_runtime::snapshot_utils::process_accounts_package_pre(
             accounts_package,
             thread_pool,
+            None,
         );
         Self::process_accounts_package(
             accounts_package,

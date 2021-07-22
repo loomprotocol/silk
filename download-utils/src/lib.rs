@@ -246,13 +246,13 @@ pub fn download_genesis_if_missing(
 
 pub fn download_snapshot<'a, 'b>(
     rpc_addr: &SocketAddr,
-    snapshot_output_dir: &Path,
+    snapshot_archives_dir: &Path,
     desired_snapshot_hash: (Slot, Hash),
     use_progress_bar: bool,
     maximum_snapshots_to_retain: usize,
     progress_notify_callback: &'a mut DownloadProgressCallbackOption<'b>,
 ) -> Result<(), String> {
-    snapshot_utils::purge_old_snapshot_archives(snapshot_output_dir, maximum_snapshots_to_retain);
+    snapshot_utils::purge_old_snapshot_archives(snapshot_archives_dir, maximum_snapshots_to_retain);
 
     for compression in &[
         ArchiveFormat::TarZstd,
@@ -260,8 +260,8 @@ pub fn download_snapshot<'a, 'b>(
         ArchiveFormat::TarBzip2,
         ArchiveFormat::Tar, // `solana-test-validator` creates uncompressed snapshots
     ] {
-        let desired_snapshot_package = snapshot_utils::build_snapshot_archive_path(
-            snapshot_output_dir.to_path_buf(),
+        let desired_snapshot_package = snapshot_utils::build_full_snapshot_archive_path(
+            snapshot_archives_dir.to_path_buf(),
             desired_snapshot_hash.0,
             &desired_snapshot_hash.1,
             *compression,

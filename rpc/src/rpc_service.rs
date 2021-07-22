@@ -205,14 +205,14 @@ impl RequestMiddleware for RpcRequestMiddleware {
         if let Some(ref snapshot_config) = self.snapshot_config {
             if request.uri().path() == "/snapshot.tar.bz2" {
                 // Convenience redirect to the latest snapshot
-                return if let Some(snapshot_archive_info) =
-                    snapshot_utils::get_highest_snapshot_archive_info(
+                return if let Some(full_snapshot_archive_info) =
+                    snapshot_utils::get_highest_full_snapshot_archive_info(
                         &snapshot_config.snapshot_package_output_path,
                     ) {
                     RpcRequestMiddleware::redirect(&format!(
                         "/{}",
-                        snapshot_archive_info
-                            .path
+                        full_snapshot_archive_info
+                            .path()
                             .file_name()
                             .unwrap_or_else(|| std::ffi::OsStr::new(""))
                             .to_str()
@@ -500,7 +500,9 @@ mod tests {
         },
         solana_runtime::{
             bank::Bank,
-            snapshot_utils::{ArchiveFormat, SnapshotVersion, DEFAULT_MAX_SNAPSHOTS_TO_RETAIN},
+            snapshot_utils::{
+                ArchiveFormat, SnapshotVersion, DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+            },
         },
         solana_sdk::{
             genesis_config::{ClusterType, DEFAULT_GENESIS_ARCHIVE},
@@ -606,7 +608,7 @@ mod tests {
                 snapshot_path: PathBuf::from("/"),
                 archive_format: ArchiveFormat::TarBzip2,
                 snapshot_version: SnapshotVersion::default(),
-                maximum_snapshots_to_retain: DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
+                maximum_snapshots_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
             }),
             bank_forks,
             RpcHealth::stub(),

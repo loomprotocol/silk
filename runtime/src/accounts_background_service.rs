@@ -192,7 +192,7 @@ impl SnapshotRequestHandler {
 
                 // Cleanup outdated snapshots
                 let mut purge_old_snapshots_time = Measure::start("purge_old_snapshots_time");
-                snapshot_utils::purge_old_snapshots(&self.snapshot_config.snapshot_path);
+                snapshot_utils::purge_old_bank_snapshots(&self.snapshot_config.snapshot_path);
                 purge_old_snapshots_time.stop();
                 total_time.stop();
 

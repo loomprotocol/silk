@@ -567,7 +567,16 @@ fn do_process_blockstore_from_root(
         ("slot", bank_forks.root(), i64),
         ("forks", initial_forks.len(), i64),
         ("calculate_capitalization_us", time_cap.as_us(), i64),
-        ("untar_us", timings.untar_us, i64),
+        (
+            "full_snapshot_untar_us",
+            timings.full_snapshot_untar_us,
+            i64
+        ),
+        (
+            "incremental_snapshot_untar_us",
+            timings.incremental_snapshot_untar_us,
+            i64
+        ),
         (
             "rebuild_bank_from_snapshots_us",
             timings.rebuild_bank_from_snapshots_us,

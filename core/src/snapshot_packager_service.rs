@@ -156,7 +156,7 @@ mod tests {
         }
 
         // Create a packageable snapshot
-        let output_tar_path = snapshot_utils::build_snapshot_archive_path(
+        let output_tar_path = snapshot_utils::build_full_snapshot_archive_path(
             snapshot_package_output_path,
             42,
             &Hash::default(),
@@ -177,7 +177,7 @@ mod tests {
         // Make tarball from packageable snapshot
         snapshot_utils::archive_snapshot_package(
             &snapshot_package,
-            snapshot_utils::DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
+            snapshot_utils::DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
         )
         .unwrap();
 

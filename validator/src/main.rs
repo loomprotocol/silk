@@ -47,7 +47,9 @@ use {
         },
         hardened_unpack::MAX_GENESIS_ARCHIVE_UNPACKED_SIZE,
         snapshot_config::SnapshotConfig,
-        snapshot_utils::{self, ArchiveFormat, SnapshotVersion, DEFAULT_MAX_SNAPSHOTS_TO_RETAIN},
+        snapshot_utils::{
+            self, ArchiveFormat, SnapshotVersion, DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+        },
     },
     solana_sdk::{
         clock::{Slot, DEFAULT_S_PER_SLOT},
@@ -475,8 +477,10 @@ fn get_rpc_node(
         blacklist_timeout = Instant::now();
 
         let mut highest_snapshot_hash: Option<(Slot, Hash)> =
-            snapshot_utils::get_highest_snapshot_archive_info(snapshot_output_dir).map(
-                |snapshot_archive_info| (snapshot_archive_info.slot, snapshot_archive_info.hash),
+            snapshot_utils::get_highest_full_snapshot_archive_info(snapshot_output_dir).map(
+                |snapshot_archive_info| {
+                    (*snapshot_archive_info.slot(), *snapshot_archive_info.hash())
+                },
             );
         let eligible_rpc_peers = if snapshot_not_required {
             rpc_peers
@@ -858,7 +862,7 @@ fn rpc_bootstrap(
                 let mut use_local_snapshot = false;
 
                 if let Some(highest_local_snapshot_slot) =
-                    snapshot_utils::get_highest_snapshot_archive_slot(snapshot_output_dir)
+                    snapshot_utils::get_highest_full_snapshot_archive_slot(snapshot_output_dir)
                 {
                     if highest_local_snapshot_slot
                         > snapshot_hash.0.saturating_sub(maximum_local_snapshot_age)
@@ -900,7 +904,7 @@ fn rpc_bootstrap(
                             {
                                 snapshot_config.maximum_snapshots_to_retain
                             } else {
-                                DEFAULT_MAX_SNAPSHOTS_TO_RETAIN
+                                DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN
                             };
                             let ret = download_snapshot(
                                 &rpc_contact_info.rpc,
@@ -1041,7 +1045,7 @@ pub fn main() {
         .send_transaction_leader_forward_count
         .to_string();
     let default_rpc_threads = num_cpus::get().to_string();
-    let default_max_snapshot_to_retain = &DEFAULT_MAX_SNAPSHOTS_TO_RETAIN.to_string();
+    let default_max_snapshot_to_retain = &DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN.to_string();
     let default_min_snapshot_download_speed = &DEFAULT_MIN_SNAPSHOT_DOWNLOAD_SPEED.to_string();
     let default_max_snapshot_download_abort = &MAX_SNAPSHOT_DOWNLOAD_ABORT.to_string();
     let default_accounts_shrink_optimize_total_space =

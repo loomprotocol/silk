@@ -1,6 +1,7 @@
 use solana_sdk::timing::duration_as_ns;
 use std::{fmt, time::Instant};
 
+#[derive(Debug)]
 pub struct Measure {
     name: &'static str,
     start: Instant,

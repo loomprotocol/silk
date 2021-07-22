@@ -2271,7 +2271,7 @@ pub mod rpc_minimal {
 
             meta.snapshot_config
                 .and_then(|snapshot_config| {
-                    snapshot_utils::get_highest_snapshot_archive_slot(
+                    snapshot_utils::get_highest_full_snapshot_archive_slot(
                         &snapshot_config.snapshot_package_output_path,
                     )
                 })

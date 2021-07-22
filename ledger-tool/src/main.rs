@@ -30,7 +30,9 @@ use solana_runtime::{
     bank_forks::BankForks,
     hardened_unpack::{open_genesis_config, MAX_GENESIS_ARCHIVE_UNPACKED_SIZE},
     snapshot_config::SnapshotConfig,
-    snapshot_utils::{self, ArchiveFormat, SnapshotVersion, DEFAULT_MAX_SNAPSHOTS_TO_RETAIN},
+    snapshot_utils::{
+        self, ArchiveFormat, SnapshotVersion, DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
+    },
 };
 use solana_sdk::{
     account::{AccountSharedData, ReadableAccount, WritableAccount},
@@ -697,7 +699,7 @@ fn load_bank_forks(
             snapshot_path,
             archive_format: ArchiveFormat::TarBzip2,
             snapshot_version: SnapshotVersion::default(),
-            maximum_snapshots_to_retain: DEFAULT_MAX_SNAPSHOTS_TO_RETAIN,
+            maximum_snapshots_to_retain: DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN,
         })
     };
     let account_paths = if let Some(account_paths) = arg_matches.value_of("account_paths") {
@@ -904,7 +906,7 @@ fn main() {
         .default_value(SnapshotVersion::default().into())
         .help("Output snapshot version");
 
-    let default_max_snapshot_to_retain = &DEFAULT_MAX_SNAPSHOTS_TO_RETAIN.to_string();
+    let default_max_snapshot_to_retain = &DEFAULT_MAX_FULL_SNAPSHOT_ARCHIVES_TO_RETAIN.to_string();
     let maximum_snapshots_to_retain_arg = Arg::with_name("maximum_snapshots_to_retain")
         .long("maximum-snapshots-to-retain")
         .value_name("NUMBER")
@@ -2196,7 +2198,7 @@ fn main() {
                         bank.slot(),
                     );
 
-                    let archive_file = snapshot_utils::bank_to_snapshot_archive(
+                    let archive_file = snapshot_utils::bank_to_full_snapshot_archive(
                         ledger_path,
                         &bank,
                         Some(snapshot_version),
