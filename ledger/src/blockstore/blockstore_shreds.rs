@@ -29,9 +29,9 @@ pub struct ShredWAL {
     // The number of shreds written to current WAL file
     cur_shreds: usize,
     // ID to current WAL file
-    cur_id: Option<u64>,
+    cur_id: Option<u128>,
     // Map of WAL ID to max slot contained in WAL
-    max_slots: BTreeMap<u64, u64>,
+    max_slots: BTreeMap<u128, u64>,
 }
 
 impl ShredWAL {
@@ -58,7 +58,7 @@ impl ShredWAL {
             let log = log?;
             // TODO: better error handling below line? We can probably fail
             // if there is some unknown file in this directory
-            let id: u64 = log.file_name().to_str().unwrap().parse().unwrap();
+            let id: u128 = log.file_name().to_str().unwrap().parse().unwrap();
             let mut max_slot = 0;
 
             let path = self.wal_path.join(id.to_string());
@@ -97,11 +97,13 @@ impl ShredWAL {
         // Check if write would push WAL size over limit
         let mut file = if self.cur_id.is_none() || self.cur_shreds + shreds.len() > self.max_shreds
         {
+            // .as_millis() provides enough granularity to avoid filename collision;
+            // observed collisions (same value) with .as_secs() with quick validator restart
             self.cur_id = Some(
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
-                    .as_secs(),
+                    .as_millis(),
             );
             self.cur_shreds = 0;
             self.max_slots.insert(self.cur_id.unwrap(), 0);
@@ -141,7 +143,7 @@ impl ShredWAL {
     }
 
     // Path to WAL file with id
-    fn id_path(&self, id: u64) -> PathBuf {
+    fn id_path(&self, id: u128) -> PathBuf {
         self.wal_path.join(id.to_string())
     }
 
