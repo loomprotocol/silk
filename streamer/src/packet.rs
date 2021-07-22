@@ -24,6 +24,18 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
     socket.set_nonblocking(false)?;
     trace!("receiving on {}", socket.local_addr().unwrap());
     let start = Instant::now();
+
+    match recv_mmsg(socket, &mut obj.packets[..], max_wait_ms) {
+        Err(e) => {
+            error!("recv_mmsg failed: {:?}", e);
+        },
+        Ok((_, npkts)) => {
+            trace!("recv_mmsg returned npkts:{}", npkts);
+            i = npkts;
+        }
+    }
+
+    /*
     loop {
         obj.packets.resize(
             std::cmp::min(i + NUM_RCVMMSGS, PACKETS_PER_BATCH),
@@ -59,6 +71,7 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
             }
         }
     }
+    */
     obj.packets.truncate(i);
     inc_new_counter_debug!("packets-recv_count", i);
     Ok(i)

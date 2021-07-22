@@ -77,7 +77,8 @@ pub fn recv_mmsg(
 
     let mut total_size = 0;
     let npkts =
-        match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, MSG_WAITFORONE, &mut ts) } {
+//        match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, MSG_WAITFORONE, &mut ts) } {
+        match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, 0, &mut ts) } {
             -1 => return Err(io::Error::last_os_error()),
             n => {
                 for i in 0..n as usize {
