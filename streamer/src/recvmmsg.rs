@@ -70,8 +70,8 @@ pub fn recv_mmsg(
         hdrs[i].msg_hdr.msg_iovlen = 1;
     }
     let mut ts = timespec {
-        tv_sec: 0,
-        tv_nsec: (timeo_ms * 1_000_000) as i64,
+        tv_sec: (timeo_ms / 1_000) as i64,
+        tv_nsec: ((timeo_ms % 1_000) * 1_000_000) as i64,
     };
 
     let mut total_size = 0;
