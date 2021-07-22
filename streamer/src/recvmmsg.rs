@@ -71,7 +71,7 @@ pub fn recv_mmsg(
     }
     let mut ts = timespec {
         tv_sec: 0,
-        tv_nsec: timeo_ms * 1_000_000,
+        tv_nsec: timeo_ms * 1_000_000 as i64,
     };
 
     let mut total_size = 0;
