@@ -164,6 +164,8 @@ fn get_program_ids(instructions: &[Instruction]) -> Vec<Pubkey> {
         .collect()
 }
 
+// NOTE: Serialization-related changes must be paired with the custom serialization
+// for versioned messages in the `RemainingMessage` struct.
 #[frozen_abi(digest = "2KnLEqfLcTBQqitE22Pp8JYkaqVVbAkGbCfdeHoyxcAU")]
 #[derive(Serialize, Deserialize, Default, Debug, PartialEq, Eq, Clone, AbiExample)]
 #[serde(rename_all = "camelCase")]
