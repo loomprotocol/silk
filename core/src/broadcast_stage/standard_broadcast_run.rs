@@ -28,11 +28,14 @@ pub struct StandardBroadcastRun {
     last_datapoint_submit: Arc<AtomicU64>,
     num_batches: usize,
     cluster_nodes: Arc<RwLock<ClusterNodes<BroadcastStage>>>,
-    last_peer_update: Arc<AtomicU64>,
+    updater_spawned: Arc<std::sync::atomic::AtomicUsize>,
+    send: Arc<Mutex<Sender<(Arc<ClusterInfo>, Option<Arc<HashMap<Pubkey, u64>>>)>>>,
+    recv: Arc<Mutex<Receiver<(Arc<ClusterInfo>, Option<Arc<HashMap<Pubkey, u64>>>)>>>,
 }
 
 impl StandardBroadcastRun {
     pub(super) fn new(keypair: Arc<Keypair>, shred_version: u16) -> Self {
+        let (send, recv) = channel();
         Self {
             process_shreds_stats: ProcessShredsStats::default(),
             transmit_shreds_stats: Arc::default(),
@@ -45,7 +48,9 @@ impl StandardBroadcastRun {
             last_datapoint_submit: Arc::default(),
             num_batches: 0,
             cluster_nodes: Arc::default(),
-            last_peer_update: Arc::default(),
+            updater_spawned: Arc::default(),
+            send: Arc::new(Mutex::new(send)),
+            recv: Arc::new(Mutex::new(recv)),
         }
     }
 
@@ -148,21 +153,21 @@ impl StandardBroadcastRun {
     #[cfg(test)]
     fn test_process_receive_results(
         &mut self,
-        cluster_info: &ClusterInfo,
-        sock: &UdpSocket,
+        _cluster_info: &ClusterInfo,
+        _sock: &UdpSocket,
         blockstore: &Arc<Blockstore>,
         receive_results: ReceiveResults,
     ) -> Result<()> {
         let (bsend, brecv) = channel();
         let (ssend, srecv) = channel();
         self.process_receive_results(blockstore, &ssend, &bsend, receive_results)?;
-        let srecv = Arc::new(Mutex::new(srecv));
+        let _srecv = Arc::new(Mutex::new(srecv));
         let brecv = Arc::new(Mutex::new(brecv));
         //data
-        let _ = self.transmit(&srecv, cluster_info, sock);
+        //let _ = self.transmit(&srecv, cluster_info, sock);
         let _ = self.record(&brecv, blockstore);
         //coding
-        let _ = self.transmit(&srecv, cluster_info, sock);
+        //let _ = self.transmit(&srecv, cluster_info, sock);
         let _ = self.record(&brecv, blockstore);
         Ok(())
     }
@@ -330,31 +335,69 @@ impl StandardBroadcastRun {
     fn broadcast(
         &mut self,
         sock: &UdpSocket,
-        cluster_info: &ClusterInfo,
-        stakes: Option<&HashMap<Pubkey, u64>>,
+        cluster_info: &Arc<ClusterInfo>,
+        stakes: Option<Arc<HashMap<Pubkey, u64>>>,
         shreds: Arc<Vec<Shred>>,
         broadcast_shred_batch_info: Option<BroadcastShredBatchInfo>,
     ) -> Result<()> {
-        const BROADCAST_PEER_UPDATE_INTERVAL_MS: u64 = 1000;
+        // according to light investigation, this seems to take awhile, even considering duplicate time counting for each sock
+        const BROADCAST_PEER_UPDATE_INTERVAL_MS: u64 = 10_000;
         trace!("Broadcasting {:?} shreds", shreds.len());
         // Get the list of peers to broadcast to
         let mut get_peers_time = Measure::start("broadcast::get_peers");
-        let now = timestamp();
-        let last = self.last_peer_update.load(Ordering::Relaxed);
+        self.send
+            .lock()
+            .unwrap()
+            .send((cluster_info.clone(), stakes))
+            .unwrap();
         #[allow(deprecated)]
-        if now - last > BROADCAST_PEER_UPDATE_INTERVAL_MS
-            && self
-                .last_peer_update
-                .compare_and_swap(now, last, Ordering::Relaxed)
-                == last
+        if self
+            .updater_spawned
+            .compare_and_swap(0, 1, Ordering::Relaxed)
+            == 0
         {
-            *self.cluster_nodes.write().unwrap() = ClusterNodes::<BroadcastStage>::new(
-                cluster_info,
-                stakes.unwrap_or(&HashMap::default()),
-            );
+            let cn = self.cluster_nodes.clone();
+            let recv = self.recv.clone();
+            let us = self.updater_spawned.clone();
+
+            // leaks this single thread...
+            Builder::new()
+                .name("sol-bc-cn-updater".to_string())
+                .spawn(move || {
+                    let mut now = None;
+                    loop {
+                        let (ci, ss) = recv.lock().unwrap().recv().unwrap();
+                        if now
+                            .map(|n: Instant| {
+                                n.elapsed().as_secs() > BROADCAST_PEER_UPDATE_INTERVAL_MS / 1000
+                            })
+                            .unwrap_or(true)
+                        {
+                            now = Some(Instant::now());
+
+                            let mut update_time = Measure::start("cluster-node-update");
+
+                            *cn.write().unwrap() =
+                                ClusterNodes::<BroadcastStage>::new(&ci, &ss.unwrap_or_default());
+                            us.store(2, Ordering::Relaxed);
+
+                            update_time.stop();
+
+                            datapoint_info!(
+                                "broadcast-cluster-node-update",
+                                ("update_us", update_time.as_us(), i64),
+                            );
+                        }
+                    }
+                })
+                .unwrap();
         }
-        get_peers_time.stop();
+        // wait until initialized once at least....
+        while self.updater_spawned.load(Ordering::Relaxed) != 2 {
+            std::thread::sleep(Duration::from_millis(1000));
+        }
         let cluster_nodes = self.cluster_nodes.read().unwrap();
+        get_peers_time.stop();
 
         let mut transmit_stats = TransmitShredsStats::default();
         // Broadcast the shreds
@@ -467,11 +510,11 @@ impl BroadcastRun for StandardBroadcastRun {
     fn transmit(
         &mut self,
         receiver: &Arc<Mutex<TransmitReceiver>>,
-        cluster_info: &ClusterInfo,
+        cluster_info: &Arc<ClusterInfo>,
         sock: &UdpSocket,
     ) -> Result<()> {
         let ((stakes, shreds), slot_start_ts) = receiver.lock().unwrap().recv()?;
-        self.broadcast(sock, cluster_info, stakes.as_deref(), shreds, slot_start_ts)
+        self.broadcast(sock, cluster_info, stakes, shreds, slot_start_ts)
     }
     fn record(
         &mut self,

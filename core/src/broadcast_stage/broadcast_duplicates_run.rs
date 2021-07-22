@@ -286,7 +286,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
     fn transmit(
         &mut self,
         receiver: &Arc<Mutex<TransmitReceiver>>,
-        cluster_info: &ClusterInfo,
+        cluster_info: &Arc<ClusterInfo>,
         sock: &UdpSocket,
     ) -> Result<()> {
         // Check the delay queue for shreds that are ready to be sent

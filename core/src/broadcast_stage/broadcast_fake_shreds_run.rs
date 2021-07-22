@@ -103,7 +103,7 @@ impl BroadcastRun for BroadcastFakeShredsRun {
     fn transmit(
         &mut self,
         receiver: &Arc<Mutex<TransmitReceiver>>,
-        cluster_info: &ClusterInfo,
+        cluster_info: &Arc<ClusterInfo>,
         sock: &UdpSocket,
     ) -> Result<()> {
         for ((stakes, data_shreds), _) in receiver.lock().unwrap().iter() {

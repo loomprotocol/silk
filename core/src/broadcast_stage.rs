@@ -22,7 +22,7 @@ use solana_poh::poh_recorder::WorkingBankEntry;
 use solana_runtime::bank::Bank;
 use solana_sdk::timing::timestamp;
 use solana_sdk::{clock::Slot, pubkey::Pubkey};
-use solana_streamer::{sendmmsg::send_mmsg, socket::is_global};
+use solana_streamer::sendmmsg::send_mmsg;
 use std::sync::atomic::AtomicU64;
 use std::{
     collections::HashMap,
@@ -136,7 +136,7 @@ trait BroadcastRun {
     fn transmit(
         &mut self,
         receiver: &Arc<Mutex<TransmitReceiver>>,
-        cluster_info: &ClusterInfo,
+        cluster_info: &Arc<ClusterInfo>,
         sock: &UdpSocket,
     ) -> Result<()>;
     fn record(
@@ -241,7 +241,7 @@ impl BroadcastStage {
 
         let socket_sender_ = socket_sender.clone();
         let thread_hdl = Builder::new()
-            .name("solana-broadcaster".to_string())
+            .name("sol-bc-run".to_string())
             .spawn(move || {
                 let _finalizer = Finalizer::new(exit);
                 Self::run(
@@ -260,7 +260,7 @@ impl BroadcastStage {
             let mut bs_transmit = broadcast_stage_run.clone();
             let cluster_info = cluster_info.clone();
             let t = Builder::new()
-                .name("solana-broadcaster-transmit".to_string())
+                .name("sol-bc-trans".to_string())
                 .spawn(move || loop {
                     let res = bs_transmit.transmit(&socket_receiver, &cluster_info, &sock);
                     let res = Self::handle_error(res, "solana-broadcaster-transmit");
@@ -277,7 +277,7 @@ impl BroadcastStage {
             let mut bs_record = broadcast_stage_run.clone();
             let btree = blockstore.clone();
             let t = Builder::new()
-                .name("solana-broadcaster-record".to_string())
+                .name("sol-bc-record".to_string())
                 .spawn(move || loop {
                     let res = bs_record.record(&blockstore_receiver, &btree);
                     let res = Self::handle_error(res, "solana-broadcaster-record");
@@ -291,7 +291,7 @@ impl BroadcastStage {
 
         let blockstore = blockstore.clone();
         let retransmit_thread = Builder::new()
-            .name("solana-broadcaster-retransmit".to_string())
+            .name("sol-bc-retrans".to_string())
             .spawn(move || loop {
                 if let Some(res) = Self::handle_error(
                     Self::check_retransmit_signals(
@@ -397,11 +397,7 @@ pub fn broadcast_shreds(
         .iter()
         .filter_map(|shred| {
             let node = cluster_nodes.get_broadcast_peer(shred.seed())?;
-            if is_global(&node.tvu) {
-                Some((&shred.payload, &node.tvu))
-            } else {
-                None
-            }
+            Some((&shred.payload, &node.tvu))
         })
         .collect();
     shred_select.stop();

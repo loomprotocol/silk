@@ -74,7 +74,6 @@ fn main() {
                         ("commit", git_commit_hash.trim().to_string(), String)
                     );
                     */
-                    
                 }
                 let last_median =
                     get_last_metrics(&"median".to_string(), &db, &name, branch).unwrap_or_default();
