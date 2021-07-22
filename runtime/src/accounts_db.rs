@@ -52,6 +52,7 @@ use solana_sdk::{
     genesis_config::ClusterType,
     hash::{Hash, Hasher},
     pubkey::Pubkey,
+    timing::AtomicInterval,
 };
 use solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY;
 use std::{
@@ -977,7 +978,7 @@ struct AccountsStats {
     delta_hash_accumulate_time_total_us: AtomicU64,
     delta_hash_num: AtomicU64,
 
-    last_store_report: AtomicU64,
+    last_store_report: AtomicInterval,
     store_hash_accounts: AtomicU64,
     calc_stored_meta: AtomicU64,
     store_accounts: AtomicU64,
@@ -997,7 +998,7 @@ struct AccountsStats {
 
 #[derive(Debug, Default)]
 struct PurgeStats {
-    last_report: AtomicU64,
+    last_report: AtomicInterval,
     safety_checks_elapsed: AtomicU64,
     remove_cache_elapsed: AtomicU64,
     remove_storage_entries_elapsed: AtomicU64,
@@ -1016,18 +1017,7 @@ struct PurgeStats {
 impl PurgeStats {
     fn report(&self, metric_name: &'static str, report_interval_ms: Option<u64>) {
         let should_report = report_interval_ms
-            .map(|report_interval_ms| {
-                let last = self.last_report.load(Ordering::Relaxed);
-                let now = solana_sdk::timing::timestamp();
-                now.saturating_sub(last) > report_interval_ms
-                    && self.last_report.compare_exchange(
-                        last,
-                        now,
-                        Ordering::Relaxed,
-                        Ordering::Relaxed,
-                    ) == Ok(last)
-                    && last != 0
-            })
+            .map(|report_interval_ms| self.last_report.should_update(report_interval_ms))
             .unwrap_or(true);
 
         if should_report {
@@ -1201,7 +1191,7 @@ impl CleanAccountsStats {
 
 #[derive(Debug, Default)]
 struct ShrinkStats {
-    last_report: AtomicU64,
+    last_report: AtomicInterval,
     num_slots_shrunk: AtomicUsize,
     storage_read_elapsed: AtomicU64,
     index_read_elapsed: AtomicU64,
@@ -1222,20 +1212,7 @@ struct ShrinkStats {
 
 impl ShrinkStats {
     fn report(&self) {
-        let last = self.last_report.load(Ordering::Relaxed);
-        let now = solana_sdk::timing::timestamp();
-
-        // last is initialized to 0 by ::default()
-        // thus, the first 'report' call would always log.
-        // Instead, the first call now initialializes 'last_report' to now.
-        let is_first_call = last == 0;
-        let should_report = now.saturating_sub(last) > 1000
-            && self
-                .last_report
-                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
-                == Ok(last);
-
-        if !is_first_call && should_report {
+        if self.last_report.should_update(1000) {
             datapoint_info!(
                 "shrink_stats",
                 (
@@ -5512,17 +5489,7 @@ impl AccountsDb {
     }
 
     fn report_store_timings(&self) {
-        let last = self.stats.last_store_report.load(Ordering::Relaxed);
-        let now = solana_sdk::timing::timestamp();
-
-        if now.saturating_sub(last) > 1000
-            && self.stats.last_store_report.compare_exchange(
-                last,
-                now,
-                Ordering::Relaxed,
-                Ordering::Relaxed,
-            ) == Ok(last)
-        {
+        if self.stats.last_store_report.should_update(1000) {
             let (read_only_cache_hits, read_only_cache_misses) =
                 self.read_only_accounts_cache.get_and_reset_stats();
             datapoint_info!(

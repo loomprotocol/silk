@@ -291,7 +291,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             sock,
             &shreds,
             &cluster_nodes,
-            &Arc::new(AtomicU64::new(0)),
+            &Arc::new(AtomicInterval::default()),
             &mut TransmitShredsStats::default(),
             cluster_info.id(),
             bank_forks,

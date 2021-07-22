@@ -1,5 +1,6 @@
 //! The `timing` module provides std::time utility functions.
 use crate::unchecked_div_by_const;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub fn duration_as_ns(d: &Duration) -> u64 {
@@ -59,9 +60,45 @@ pub fn slot_duration_from_slots_per_year(slots_per_year: f64) -> Duration {
     Duration::from_nanos(slot_in_ns as u64)
 }
 
+#[derive(Debug, Default)]
+pub struct AtomicInterval {
+    last_update: AtomicU64,
+}
+
+impl AtomicInterval {
+    pub fn should_update(&self, interval_time: u64) -> bool {
+        self.should_update_ext(interval_time, true)
+    }
+
+    pub fn should_update_ext(&self, interval_time: u64, skip_first: bool) -> bool {
+        let now = timestamp();
+        let last = self.last_update.load(Ordering::Relaxed);
+        now.saturating_sub(last) > interval_time
+            && self
+                .last_update
+                .compare_exchange(last, now, Ordering::Relaxed, Ordering::Relaxed)
+                == Ok(last)
+            && !(skip_first && last == 0)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_interval_update() {
+        solana_logger::setup();
+        let i = AtomicInterval::default();
+        assert!(!i.should_update(1000));
+
+        let i = AtomicInterval::default();
+        assert!(i.should_update_ext(1000, false));
+
+        std::thread::sleep(Duration::from_millis(10));
+        assert!(i.should_update(9));
+        assert!(!i.should_update(100));
+    }
 
     #[test]
     #[allow(clippy::float_cmp)]
