@@ -1417,6 +1417,25 @@ dependencies = [
 
 [[package]]
 name = "libsecp256k1"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd1137239ab33b41aa9637a88a28249e5e70c40a42ccc92db7f12cc356c1fcd7"
+dependencies = [
+ "arrayref",
+ "base64 0.12.3",
+ "digest 0.9.0",
+ "hmac-drbg",
+ "libsecp256k1-core",
+ "libsecp256k1-gen-ecmult",
+ "libsecp256k1-gen-genmult",
+ "rand 0.7.3",
+ "serde",
+ "sha2",
+ "typenum",
+]
+
+[[package]]
+name = "libsecp256k1"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9d220bc1feda2ac231cb78c3d26f27676b8cf82c96971f7aeef3d0cf2797c73"
@@ -2603,7 +2622,7 @@ version = "1.8.0"
 dependencies = [
  "bincode",
  "byteorder 1.4.3",
- "libsecp256k1",
+ "libsecp256k1 0.6.0",
  "log",
  "num-derive",
  "num-traits",
@@ -3203,7 +3222,7 @@ dependencies = [
  "hex",
  "itertools 0.9.0",
  "lazy_static",
- "libsecp256k1",
+ "libsecp256k1 0.5.0",
  "log",
  "num-derive",
  "num-traits",
@@ -3236,7 +3255,7 @@ dependencies = [
  "hex",
  "itertools 0.10.1",
  "lazy_static",
- "libsecp256k1",
+ "libsecp256k1 0.6.0",
  "log",
  "num-derive",
  "num-traits",
@@ -3377,7 +3396,7 @@ dependencies = [
  "hmac 0.11.0",
  "itertools 0.10.1",
  "lazy_static",
- "libsecp256k1",
+ "libsecp256k1 0.6.0",
  "log",
  "memmap2 0.3.0",
  "num-derive",
