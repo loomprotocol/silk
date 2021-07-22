@@ -11,7 +11,7 @@ use crate::{
     cluster_slots_service::ClusterSlotsUpdateSender,
     commitment_service::{AggregateCommitmentService, CommitmentAggregationData},
     consensus::{
-        ComputedBankState, Stake, SwitchForkDecision, Tower, TowerStorage, VotedStakes,
+        ComputedBankState, SavedTower, Stake, SwitchForkDecision, Tower, TowerStorage, VotedStakes,
         SWITCH_FORK_THRESHOLD,
     },
     fork_choice::{ForkChoice, SelectVoteAndResetForkResult},
@@ -590,7 +590,6 @@ impl ReplayStage {
                             switch_fork_decision,
                             &bank_forks,
                             &mut tower,
-                            tower_storage.as_ref(),
                             &mut progress,
                             &vote_account,
                             &identity_keypair,
@@ -1474,7 +1473,6 @@ impl ReplayStage {
         switch_fork_decision: &SwitchForkDecision,
         bank_forks: &Arc<RwLock<BankForks>>,
         tower: &mut Tower,
-        tower_storage: &dyn TowerStorage,
         progress: &mut ProgressMap,
         vote_account_pubkey: &Pubkey,
         identity_keypair: &Keypair,
@@ -1502,15 +1500,10 @@ impl ReplayStage {
         trace!("handle votable bank {}", bank.slot());
         let new_root = tower.record_bank_vote(bank, vote_account_pubkey);
 
-        {
-            let mut measure = Measure::start("tower_save-ms");
-            if let Err(err) = tower.save(tower_storage, identity_keypair) {
-                error!("Unable to save tower: {:?}", err);
-                std::process::exit(1);
-            }
-            measure.stop();
-            inc_new_counter_info!("tower_save-ms", measure.as_ms() as usize);
-        }
+        let saved_tower = SavedTower::new(&tower, identity_keypair).unwrap_or_else(|err| {
+            error!("Unable to create saved tower: {:?}", err);
+            std::process::exit(1);
+        });
 
         if let Some(new_root) = new_root {
             // get the root bank before squash
@@ -1580,6 +1573,7 @@ impl ReplayStage {
             identity_keypair,
             authorized_voter_keypairs,
             tower,
+            saved_tower,
             switch_fork_decision,
             vote_signatures,
             *has_new_vote_been_rooted,
@@ -1768,6 +1762,7 @@ impl ReplayStage {
         identity_keypair: &Keypair,
         authorized_voter_keypairs: &[Arc<Keypair>],
         tower: &mut Tower,
+        saved_tower: SavedTower,
         switch_fork_decision: &SwitchForkDecision,
         vote_signatures: &mut Vec<Signature>,
         has_new_vote_been_rooted: bool,
@@ -1795,6 +1790,7 @@ impl ReplayStage {
                 .send(VoteOp::PushVote {
                     tx: vote_tx,
                     tower_slots,
+                    saved_tower,
                 })
                 .unwrap_or_else(|err| warn!("Error: {:?}", err));
         }
@@ -2723,7 +2719,7 @@ impl ReplayStage {
 pub mod tests {
     use super::*;
     use crate::{
-        consensus::Tower,
+        consensus::{NullTowerStorage, Tower},
         progress_map::ValidatorStakeInfo,
         replay_stage::ReplayStage,
         tree_diff::TreeDiff,
@@ -5391,6 +5387,7 @@ pub mod tests {
             vote_simulator,
             ..
         } = replay_blockstore_components(None, 10, None::<GenerateVotes>);
+        let tower_storage = NullTowerStorage::default();
 
         let VoteSimulator {
             mut validator_keypairs,
@@ -5433,6 +5430,7 @@ pub mod tests {
             &identity_keypair,
             &my_vote_keypair,
             &mut tower,
+            SavedTower::default(),
             &SwitchForkDecision::SameFork,
             &mut voted_signatures,
             has_new_vote_been_rooted,
@@ -5442,7 +5440,12 @@ pub mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        crate::voting_service::VotingService::handle_vote(&cluster_info, &poh_recorder, vote_info);
+        crate::voting_service::VotingService::handle_vote(
+            &cluster_info,
+            &poh_recorder,
+            &tower_storage,
+            vote_info,
+        );
 
         let mut cursor = Cursor::default();
         let (_, votes) = cluster_info.get_votes(&mut cursor);
@@ -5490,6 +5493,7 @@ pub mod tests {
             &identity_keypair,
             &my_vote_keypair,
             &mut tower,
+            SavedTower::default(),
             &SwitchForkDecision::SameFork,
             &mut voted_signatures,
             has_new_vote_been_rooted,
@@ -5499,7 +5503,12 @@ pub mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        crate::voting_service::VotingService::handle_vote(&cluster_info, &poh_recorder, vote_info);
+        crate::voting_service::VotingService::handle_vote(
+            &cluster_info,
+            &poh_recorder,
+            &tower_storage,
+            vote_info,
+        );
         let (_, votes) = cluster_info.get_votes(&mut cursor);
         assert_eq!(votes.len(), 1);
         let vote_tx = &votes[0];
@@ -5561,7 +5570,12 @@ pub mod tests {
         let vote_info = voting_receiver
             .recv_timeout(Duration::from_secs(1))
             .unwrap();
-        crate::voting_service::VotingService::handle_vote(&cluster_info, &poh_recorder, vote_info);
+        crate::voting_service::VotingService::handle_vote(
+            &cluster_info,
+            &poh_recorder,
+            &tower_storage,
+            vote_info,
+        );
 
         assert!(last_vote_refresh_time.last_refresh_time > clone_refresh_time);
         let (_, votes) = cluster_info.get_votes(&mut cursor);

@@ -1229,6 +1229,21 @@ pub trait TowerStorage: Sync + Send {
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
+pub struct NullTowerStorage {}
+
+impl TowerStorage for NullTowerStorage {
+    fn load(&self, _node_pubkey: &Pubkey) -> Result<SavedTower> {
+        Err(TowerError::WrongTower(
+            "NullTowerStorage has no storage".into(),
+        ))
+    }
+
+    fn store(&self, _saved_tower: &SavedTower) -> Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct FileTowerStorage {
     pub tower_path: PathBuf,
 }

@@ -274,12 +274,16 @@ impl Tvu {
             cache_block_meta_sender,
             bank_notification_sender,
             wait_for_vote_to_start_leader: tvu_config.wait_for_vote_to_start_leader,
-            tower_storage,
+            tower_storage: tower_storage.clone(),
         };
 
         let (voting_sender, voting_receiver) = channel();
-        let voting_service =
-            VotingService::new(voting_receiver, cluster_info.clone(), poh_recorder.clone());
+        let voting_service = VotingService::new(
+            voting_receiver,
+            cluster_info.clone(),
+            poh_recorder.clone(),
+            tower_storage,
+        );
 
         let (cost_update_sender, cost_update_receiver): (
             Sender<ExecuteTimings>,
