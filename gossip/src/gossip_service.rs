@@ -20,7 +20,7 @@ use {
         sync::{
             atomic::{AtomicBool, Ordering},
             mpsc::channel,
-            {Arc, RwLock},
+            Arc, RwLock,
         },
         thread::{self, sleep, JoinHandle},
         time::{Duration, Instant},

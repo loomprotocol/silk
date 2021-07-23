@@ -31,6 +31,7 @@ use {
         gossip_error::GossipError,
         ping_pong::{self, PingCache, Pong},
         socketaddr, socketaddr_any,
+        sync::RwLock,
         weighted_shuffle::WeightedShuffle,
     },
     bincode::{serialize, serialized_size},
@@ -82,7 +83,7 @@ use {
         sync::{
             atomic::{AtomicBool, Ordering},
             mpsc::{Receiver, RecvTimeoutError, Sender},
-            {Arc, Mutex, RwLock, RwLockReadGuard},
+            {Arc, Mutex, RwLockReadGuard},
         },
         thread::{sleep, Builder, JoinHandle},
         time::{Duration, Instant},
@@ -1560,7 +1561,7 @@ impl ClusterInfo {
     fn handle_purge(
         &self,
         thread_pool: &ThreadPool,
-        bank_forks: Option<&RwLock<BankForks>>,
+        bank_forks: Option<&std::sync::RwLock<BankForks>>,
         stakes: &HashMap<Pubkey, u64>,
     ) {
         let self_pubkey = self.id();
@@ -1610,7 +1611,7 @@ impl ClusterInfo {
     /// randomly pick a node and ask them for updates asynchronously
     pub fn gossip(
         self: Arc<Self>,
-        bank_forks: Option<Arc<RwLock<BankForks>>>,
+        bank_forks: Option<Arc<std::sync::RwLock<BankForks>>>,
         sender: PacketSender,
         gossip_validators: Option<HashSet<Pubkey>>,
         exit: &Arc<AtomicBool>,
@@ -2430,7 +2431,7 @@ impl ClusterInfo {
     fn run_listen(
         &self,
         recycler: &PacketsRecycler,
-        bank_forks: Option<&RwLock<BankForks>>,
+        bank_forks: Option<&std::sync::RwLock<BankForks>>,
         receiver: &Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         response_sender: &PacketSender,
         thread_pool: &ThreadPool,
@@ -2505,7 +2506,7 @@ impl ClusterInfo {
 
     pub(crate) fn listen(
         self: Arc<Self>,
-        bank_forks: Option<Arc<RwLock<BankForks>>>,
+        bank_forks: Option<Arc<std::sync::RwLock<BankForks>>>,
         requests_receiver: Receiver<Vec<(/*from:*/ SocketAddr, Protocol)>>,
         response_sender: PacketSender,
         should_check_duplicate_instance: bool,
@@ -2601,7 +2602,7 @@ impl ClusterInfo {
 // Returns root bank's epoch duration. Falls back on
 //     DEFAULT_SLOTS_PER_EPOCH * DEFAULT_MS_PER_SLOT
 // if there are no working banks.
-fn get_epoch_duration(bank_forks: Option<&RwLock<BankForks>>) -> Duration {
+fn get_epoch_duration(bank_forks: Option<&std::sync::RwLock<BankForks>>) -> Duration {
     let num_slots = match bank_forks {
         None => {
             inc_new_counter_info!("cluster_info-purge-no_working_bank", 1);
