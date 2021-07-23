@@ -29,7 +29,7 @@ use std::{
     thread::sleep,
     time::{Duration, Instant},
 };
-use tokio_02::runtime::Runtime;
+use tokio::runtime::Runtime;
 
 macro_rules! json_req {
     ($method: expr, $params: expr) => {{
@@ -165,7 +165,7 @@ fn test_rpc_slot_updates() {
         let connect = ws::try_connect::<PubsubClient>(&rpc_pubsub_url).unwrap();
         let client = connect.await.unwrap();
 
-        tokio_02::spawn(async move {
+        tokio::spawn(async move {
             let mut update_sub = client.slots_updates_subscribe().unwrap();
             loop {
                 let response = update_sub.next().await.unwrap();
@@ -274,7 +274,7 @@ fn test_rpc_subscriptions() {
                 )
                 .unwrap_or_else(|err| panic!("sig sub err: {:#?}", err));
 
-            tokio_02::spawn(async move {
+            tokio::spawn(async move {
                 let response = sig_sub.next().await.unwrap();
                 status_sender
                     .send((sig.clone(), response.unwrap()))
@@ -294,7 +294,7 @@ fn test_rpc_subscriptions() {
                     }),
                 )
                 .unwrap_or_else(|err| panic!("acct sub err: {:#?}", err));
-            tokio_02::spawn(async move {
+            tokio::spawn(async move {
                 let response = client_sub.next().await.unwrap();
                 account_sender.send(response.unwrap()).unwrap();
             });
@@ -304,7 +304,7 @@ fn test_rpc_subscriptions() {
         let mut slot_sub = client
             .slot_subscribe()
             .unwrap_or_else(|err| panic!("sig sub err: {:#?}", err));
-        tokio_02::spawn(async move {
+        tokio::spawn(async move {
             let _response = slot_sub.next().await.unwrap();
             ready_sender.send(()).unwrap();
         });
