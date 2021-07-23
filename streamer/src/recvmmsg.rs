@@ -57,6 +57,11 @@ pub fn recv_mmsg(
     let mut addr: [sockaddr_in; NUM_RCVMMSGS] = unsafe { mem::zeroed() };
     let addrlen = mem::size_of_val(&addr) as socklen_t;
 
+    let mut ts = timespec {
+        tv_sec: (timeo_ms / 1_000) as i64,
+        tv_nsec: ((timeo_ms % 1_000) * 1_000_000) as i64,
+    };
+
     let sock_fd = sock.as_raw_fd();
 
     let count = cmp::min(iovs.len(), packets.len());
@@ -70,15 +75,10 @@ pub fn recv_mmsg(
         hdrs[i].msg_hdr.msg_iov = &mut iovs[i];
         hdrs[i].msg_hdr.msg_iovlen = 1;
     }
-    let mut ts = timespec {
-        tv_sec: (timeo_ms / 1_000) as i64,
-        tv_nsec: ((timeo_ms % 1_000) * 1_000_000) as i64,
-    };
 
     let mut total_size = 0;
     let npkts =
-//        match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, MSG_WAITFORONE, &mut ts) } {
-        match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, 0, &mut ts) } {
+        match unsafe { recvmmsg(sock_fd, &mut hdrs[0], count as u32, MSG_WAITFORONE, &mut ts) } {
             -1 => return Err(io::Error::last_os_error()),
             n => {
                 for i in 0..n as usize {

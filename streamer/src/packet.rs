@@ -10,8 +10,15 @@ pub use solana_perf::packet::{
 
 use solana_metrics::inc_new_counter_debug;
 pub use solana_sdk::packet::{Meta, Packet, PACKET_DATA_SIZE};
-use std::io;
-use std::{io::Result, net::UdpSocket, time::Instant};
+use std::{
+    io,
+    io::Result,
+    net::UdpSocket,
+    thread::sleep,
+    time::{Duration, Instant},
+};
+
+pub const RECV_BUFFER_DELAY_US: u64 = 50;
 
 pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Result<usize> {
     let mut i = 0;
@@ -25,17 +32,6 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
     trace!("receiving on {}", socket.local_addr().unwrap());
     let start = Instant::now();
 
-    match recv_mmsg(socket, &mut obj.packets[..], max_wait_ms) {
-        Err(e) => {
-            error!("recv_mmsg failed: {:?}", e);
-        },
-        Ok((_, npkts)) => {
-            trace!("recv_mmsg returned npkts:{}", npkts);
-            i = npkts;
-        }
-    }
-
-    /*
     loop {
         obj.packets.resize(
             std::cmp::min(i + NUM_RCVMMSGS, PACKETS_PER_BATCH),
@@ -43,8 +39,11 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
         );
         match recv_mmsg(socket, &mut obj.packets[i..], max_wait_ms) {
             Err(e) if i > 0 => {
-                if e.kind() == io::ErrorKind::WouldBlock {
-                    break;
+                if e.kind() == io::ErrorKind::WouldBlock
+                    && (start.elapsed().as_micros() + RECV_BUFFER_DELAY_US as u128)
+                        < (max_wait_ms * 1_000) as u128
+                {
+                    sleep(Duration::from_micros(RECV_BUFFER_DELAY_US));
                 }
                 if start.elapsed().as_millis() as u64 > max_wait_ms {
                     break;
@@ -71,7 +70,7 @@ pub fn recv_from(obj: &mut Packets, socket: &UdpSocket, max_wait_ms: u64) -> Res
             }
         }
     }
-    */
+
     obj.packets.truncate(i);
     inc_new_counter_debug!("packets-recv_count", i);
     Ok(i)
