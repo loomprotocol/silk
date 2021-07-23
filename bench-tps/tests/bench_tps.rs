@@ -13,6 +13,7 @@ use solana_local_cluster::{
     validator_configs::make_identical_validator_configs,
 };
 use solana_sdk::signature::{Keypair, Signer};
+use solana_streamer::socket::SocketAddrSpace;
 use std::{
     sync::{mpsc::channel, Arc},
     time::Duration,
@@ -23,13 +24,19 @@ fn test_bench_tps_local_cluster(config: Config) {
 
     solana_logger::setup();
     const NUM_NODES: usize = 1;
-    let cluster = LocalCluster::new(&mut ClusterConfig {
-        node_stakes: vec![999_990; NUM_NODES],
-        cluster_lamports: 200_000_000,
-        validator_configs: make_identical_validator_configs(&ValidatorConfig::default(), NUM_NODES),
-        native_instruction_processors,
-        ..ClusterConfig::default()
-    });
+    let cluster = LocalCluster::new(
+        &mut ClusterConfig {
+            node_stakes: vec![999_990; NUM_NODES],
+            cluster_lamports: 200_000_000,
+            validator_configs: make_identical_validator_configs(
+                &ValidatorConfig::default(),
+                NUM_NODES,
+            ),
+            native_instruction_processors,
+            ..ClusterConfig::default()
+        },
+        SocketAddrSpace::Unspecified,
+    );
 
     let faucet_keypair = Keypair::new();
     cluster.transfer(

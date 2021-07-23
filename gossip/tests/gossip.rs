@@ -18,6 +18,7 @@ use {
         timing::timestamp,
         transaction::Transaction,
     },
+    solana_streamer::socket::SocketAddrSpace,
     solana_vote_program::{vote_instruction, vote_state::Vote},
     std::{
         net::UdpSocket,
@@ -33,7 +34,11 @@ use {
 fn test_node(exit: &Arc<AtomicBool>) -> (Arc<ClusterInfo>, GossipService, UdpSocket) {
     let keypair = Arc::new(Keypair::new());
     let mut test_node = Node::new_localhost_with_pubkey(&keypair.pubkey());
-    let cluster_info = Arc::new(ClusterInfo::new(test_node.info.clone(), keypair));
+    let cluster_info = Arc::new(ClusterInfo::new(
+        test_node.info.clone(),
+        keypair,
+        SocketAddrSpace::Unspecified,
+    ));
     let gossip_service = GossipService::new(
         &cluster_info,
         None,
@@ -56,7 +61,11 @@ fn test_node_with_bank(
     bank_forks: Arc<RwLock<BankForks>>,
 ) -> (Arc<ClusterInfo>, GossipService, UdpSocket) {
     let mut test_node = Node::new_localhost_with_pubkey(&node_keypair.pubkey());
-    let cluster_info = Arc::new(ClusterInfo::new(test_node.info.clone(), node_keypair));
+    let cluster_info = Arc::new(ClusterInfo::new(
+        test_node.info.clone(),
+        node_keypair,
+        SocketAddrSpace::Unspecified,
+    ));
     let gossip_service = GossipService::new(
         &cluster_info,
         Some(bank_forks),
@@ -209,7 +218,13 @@ pub fn cluster_info_retransmit() {
     p.meta.size = 10;
     let peers = c1.tvu_peers();
     let retransmit_peers: Vec<_> = peers.iter().collect();
-    ClusterInfo::retransmit_to(&retransmit_peers, &p, &tn1, false);
+    ClusterInfo::retransmit_to(
+        &retransmit_peers,
+        &p,
+        &tn1,
+        false,
+        &SocketAddrSpace::Unspecified,
+    );
     let res: Vec<_> = [tn1, tn2, tn3]
         .into_par_iter()
         .map(|s| {

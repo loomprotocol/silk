@@ -64,7 +64,7 @@ use {
     solana_streamer::{
         packet,
         sendmmsg::{multi_target_send, SendPktsError},
-        socket::is_global,
+        socket::SocketAddrSpace,
         streamer::{PacketReceiver, PacketSender},
     },
     solana_vote_program::vote_state::MAX_LOCKOUT_HISTORY,
@@ -157,12 +157,7 @@ pub struct ClusterInfo {
     contact_save_interval: u64,  // milliseconds, 0 = disabled
     instance: RwLock<NodeInstance>,
     contact_info_path: PathBuf,
-}
-
-impl Default for ClusterInfo {
-    fn default() -> Self {
-        Self::new_with_invalid_keypair(ContactInfo::default())
-    }
+    socket_addr_space: SocketAddrSpace,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, AbiExample)]
@@ -391,12 +386,11 @@ fn retain_staked(values: &mut Vec<CrdsValue>, stakes: &HashMap<Pubkey, u64>) {
 }
 
 impl ClusterInfo {
-    /// Without a valid keypair gossip will not function. Only useful for tests.
-    pub fn new_with_invalid_keypair(contact_info: ContactInfo) -> Self {
-        Self::new(contact_info, Arc::new(Keypair::new()))
-    }
-
-    pub fn new(contact_info: ContactInfo, keypair: Arc<Keypair>) -> Self {
+    pub fn new(
+        contact_info: ContactInfo,
+        keypair: Arc<Keypair>,
+        socket_addr_space: SocketAddrSpace,
+    ) -> Self {
         let id = contact_info.id;
         let me = Self {
             gossip: CrdsGossip::default(),
@@ -415,6 +409,7 @@ impl ClusterInfo {
             instance: RwLock::new(NodeInstance::new(&mut thread_rng(), id, timestamp())),
             contact_info_path: PathBuf::default(),
             contact_save_interval: 0, // disabled
+            socket_addr_space,
         };
         me.insert_self();
         me.push_self(&HashMap::new(), None);
@@ -444,11 +439,16 @@ impl ClusterInfo {
             instance: RwLock::new(NodeInstance::new(&mut thread_rng(), *new_id, timestamp())),
             contact_info_path: PathBuf::default(),
             contact_save_interval: 0, // disabled
+            ..*self
         }
     }
 
     pub fn set_contact_debug_interval(&mut self, new: u64) {
         self.contact_debug_interval = new;
+    }
+
+    pub fn socket_addr_space(&self) -> &SocketAddrSpace {
+        &self.socket_addr_space
     }
 
     fn push_self(
@@ -474,8 +474,13 @@ impl ClusterInfo {
             shred_version,
             ..
         } = *self.my_contact_info.read().unwrap();
-        self.gossip
-            .refresh_push_active_set(&self_pubkey, shred_version, stakes, gossip_validators);
+        self.gossip.refresh_push_active_set(
+            &self_pubkey,
+            shred_version,
+            stakes,
+            gossip_validators,
+            &self.socket_addr_space,
+        );
     }
 
     // TODO kill insert_info, only used by tests
@@ -667,7 +672,7 @@ impl ClusterInfo {
             .all_peers()
             .into_iter()
             .filter_map(|(node, last_updated)| {
-                if !ContactInfo::is_valid_address(&node.rpc) {
+                if !ContactInfo::is_valid_address(&node.rpc, &self.socket_addr_space) {
                     return None;
                 }
 
@@ -678,8 +683,8 @@ impl ClusterInfo {
                     return None;
                 }
 
-                fn addr_to_string(default_ip: &IpAddr, addr: &SocketAddr) -> String {
-                    if ContactInfo::is_valid_address(addr) {
+                let addr_to_string = |default_ip: &IpAddr, addr: &SocketAddr| -> String {
+                    if ContactInfo::is_valid_address(addr, &self.socket_addr_space) {
                         if &addr.ip() == default_ip {
                             addr.port().to_string()
                         } else {
@@ -688,7 +693,7 @@ impl ClusterInfo {
                     } else {
                         "none".to_string()
                     }
-                }
+                };
 
                 let rpc_addr = node.rpc.ip();
                 Some(format!(
@@ -732,7 +737,7 @@ impl ClusterInfo {
             .all_peers()
             .into_iter()
             .filter_map(|(node, last_updated)| {
-                let is_spy_node = Self::is_spy_node(&node);
+                let is_spy_node = Self::is_spy_node(&node, &self.socket_addr_space);
                 if is_spy_node {
                     total_spy_nodes = total_spy_nodes.saturating_add(1);
                 }
@@ -745,8 +750,8 @@ impl ClusterInfo {
                     if is_spy_node {
                         shred_spy_nodes = shred_spy_nodes.saturating_add(1);
                     }
-                    fn addr_to_string(default_ip: &IpAddr, addr: &SocketAddr) -> String {
-                        if ContactInfo::is_valid_address(addr) {
+                    let addr_to_string = |default_ip: &IpAddr, addr: &SocketAddr| -> String {
+                        if ContactInfo::is_valid_address(addr, &self.socket_addr_space) {
                             if &addr.ip() == default_ip {
                                 addr.port().to_string()
                             } else {
@@ -755,11 +760,11 @@ impl ClusterInfo {
                         } else {
                             "none".to_string()
                         }
-                    }
+                    };
                     let ip_addr = node.gossip.ip();
                     Some(format!(
                         "{:15} {:2}| {:5} | {:44} |{:^9}| {:5}| {:5}| {:5}| {:5}| {:5}| {:5}| {:5}| {}\n",
-                        if ContactInfo::is_valid_address(&node.gossip) {
+                        if ContactInfo::is_valid_address(&node.gossip, &self.socket_addr_space) {
                             ip_addr.to_string()
                         } else {
                             "none".to_string()
@@ -1131,7 +1136,10 @@ impl ClusterInfo {
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
             .get_nodes_contact_info()
-            .filter(|x| x.id != self_pubkey && ContactInfo::is_valid_address(&x.rpc))
+            .filter(|x| {
+                x.id != self_pubkey
+                    && ContactInfo::is_valid_address(&x.rpc, &self.socket_addr_space)
+            })
             .cloned()
             .collect()
     }
@@ -1151,7 +1159,9 @@ impl ClusterInfo {
         gossip_crds
             .get_nodes_contact_info()
             // shred_version not considered for gossip peers (ie, spy nodes do not set shred_version)
-            .filter(|x| x.id != me && ContactInfo::is_valid_address(&x.gossip))
+            .filter(|x| {
+                x.id != me && ContactInfo::is_valid_address(&x.gossip, &self.socket_addr_space)
+            })
             .cloned()
             .collect()
     }
@@ -1161,7 +1171,10 @@ impl ClusterInfo {
         let self_pubkey = self.id();
         self.time_gossip_read_lock("all_tvu_peers", &self.stats.all_tvu_peers)
             .get_nodes_contact_info()
-            .filter(|x| ContactInfo::is_valid_address(&x.tvu) && x.id != self_pubkey)
+            .filter(|x| {
+                ContactInfo::is_valid_address(&x.tvu, &self.socket_addr_space)
+                    && x.id != self_pubkey
+            })
             .cloned()
             .collect()
     }
@@ -1193,7 +1206,7 @@ impl ClusterInfo {
                 node.id != self_pubkey
                     && node.shred_version == self_shred_version
                     && ContactInfo::is_valid_tvu_address(&node.tvu)
-                    && ContactInfo::is_valid_address(&node.serve_repair)
+                    && ContactInfo::is_valid_address(&node.serve_repair, &self.socket_addr_space)
                     && match gossip_crds.get::<&LowestSlot>(node.id) {
                         None => true, // fallback to legacy behavior
                         Some(lowest_slot) => lowest_slot.lowest <= slot,
@@ -1203,10 +1216,10 @@ impl ClusterInfo {
             .collect()
     }
 
-    fn is_spy_node(contact_info: &ContactInfo) -> bool {
-        !ContactInfo::is_valid_address(&contact_info.tpu)
-            || !ContactInfo::is_valid_address(&contact_info.gossip)
-            || !ContactInfo::is_valid_address(&contact_info.tvu)
+    fn is_spy_node(contact_info: &ContactInfo, socket_addr_space: &SocketAddrSpace) -> bool {
+        !ContactInfo::is_valid_address(&contact_info.tpu, socket_addr_space)
+            || !ContactInfo::is_valid_address(&contact_info.gossip, socket_addr_space)
+            || !ContactInfo::is_valid_address(&contact_info.tvu, socket_addr_space)
     }
 
     /// compute broadcast table
@@ -1215,7 +1228,10 @@ impl ClusterInfo {
         let gossip_crds = self.gossip.crds.read().unwrap();
         gossip_crds
             .get_nodes_contact_info()
-            .filter(|x| x.id != self_pubkey && ContactInfo::is_valid_address(&x.tpu))
+            .filter(|x| {
+                x.id != self_pubkey
+                    && ContactInfo::is_valid_address(&x.tpu, &self.socket_addr_space)
+            })
             .cloned()
             .collect()
     }
@@ -1223,20 +1239,25 @@ impl ClusterInfo {
     /// retransmit messages to a list of nodes
     /// # Remarks
     /// We need to avoid having obj locked while doing a io, such as the `send_to`
-    pub fn retransmit_to(peers: &[&ContactInfo], packet: &Packet, s: &UdpSocket, forwarded: bool) {
+    pub fn retransmit_to(
+        peers: &[&ContactInfo],
+        packet: &Packet,
+        s: &UdpSocket,
+        forwarded: bool,
+        socket_addr_space: &SocketAddrSpace,
+    ) {
         trace!("retransmit orders {}", peers.len());
         let dests: Vec<_> = if forwarded {
             peers
                 .iter()
                 .map(|peer| &peer.tvu_forwards)
-                .filter(|addr| ContactInfo::is_valid_address(addr))
-                .filter(|addr| is_global(addr))
+                .filter(|addr| ContactInfo::is_valid_address(addr, socket_addr_space))
                 .collect()
         } else {
             peers
                 .iter()
                 .map(|peer| &peer.tvu)
-                .filter(|addr| is_global(addr))
+                .filter(|addr| socket_addr_space.check(addr))
                 .collect()
         };
         let data = &packet.data[..packet.meta.size];
@@ -1377,6 +1398,7 @@ impl ClusterInfo {
                 MAX_BLOOM_SIZE,
                 &self.ping_cache,
                 &mut pings,
+                &self.socket_addr_space,
             ) {
                 Err(_) => Vec::default(),
                 Ok((peer, filters)) => vec![(peer, filters)],
@@ -1850,7 +1872,7 @@ impl ClusterInfo {
         // incoming pull-requests, pings are also sent to request.from_addr (as
         // opposed to caller.gossip address).
         move |request| {
-            ContactInfo::is_valid_address(&request.from_addr) && {
+            ContactInfo::is_valid_address(&request.from_addr, &self.socket_addr_space) && {
                 let node = (request.caller.pubkey(), request.from_addr);
                 *cache.entry(node).or_insert_with(|| hard_check(node))
             }
@@ -2219,7 +2241,7 @@ impl ClusterInfo {
         let new_push_requests = self.new_push_requests(stakes, require_stake_for_gossip);
         inc_new_counter_debug!("cluster_info-push_message-pushes", new_push_requests.len());
         for (address, request) in new_push_requests {
-            if ContactInfo::is_valid_address(&address) {
+            if ContactInfo::is_valid_address(&address, &self.socket_addr_space) {
                 match Packet::from_data(Some(&address), &request) {
                     Ok(packet) => packets.packets.push(packet),
                     Err(err) => error!("failed to write push-request packet: {:?}", err),
@@ -2869,13 +2891,14 @@ pub fn push_messages_to_peer(
     messages: Vec<CrdsValue>,
     self_id: Pubkey,
     peer_gossip: SocketAddr,
+    socket_addr_space: &SocketAddrSpace,
 ) -> Result<(), GossipError> {
     let reqs: Vec<_> = ClusterInfo::split_gossip_messages(PUSH_MESSAGE_MAX_PAYLOAD_SIZE, messages)
         .map(move |payload| (peer_gossip, Protocol::PushMessage(self_id, payload)))
         .collect();
     let packets = to_packets_with_destination(PacketsRecycler::default(), &reqs);
     let sock = UdpSocket::bind("0.0.0.0:0").unwrap();
-    packet::send_to(&packets, &sock)?;
+    packet::send_to(&packets, &sock, socket_addr_space)?;
     Ok(())
 }
 
@@ -2969,20 +2992,30 @@ mod tests {
     fn test_gossip_node() {
         //check that a gossip nodes always show up as spies
         let (node, _, _) = ClusterInfo::spy_node(solana_sdk::pubkey::new_rand(), 0);
-        assert!(ClusterInfo::is_spy_node(&node));
+        assert!(ClusterInfo::is_spy_node(
+            &node,
+            &SocketAddrSpace::Unspecified
+        ));
         let (node, _, _) = ClusterInfo::gossip_node(
             solana_sdk::pubkey::new_rand(),
             &"1.1.1.1:1111".parse().unwrap(),
             0,
         );
-        assert!(ClusterInfo::is_spy_node(&node));
+        assert!(ClusterInfo::is_spy_node(
+            &node,
+            &SocketAddrSpace::Unspecified
+        ));
     }
 
     #[test]
     fn test_handle_pull() {
         solana_logger::setup();
         let node = Node::new_localhost();
-        let cluster_info = Arc::new(ClusterInfo::new_with_invalid_keypair(node.info));
+        let cluster_info = Arc::new(ClusterInfo::new(
+            node.info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        ));
 
         let entrypoint_pubkey = solana_sdk::pubkey::new_rand();
         let data = test_crds_values(entrypoint_pubkey);
@@ -3039,6 +3072,7 @@ mod tests {
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&this_node.pubkey(), timestamp()),
             this_node.clone(),
+            SocketAddrSpace::Unspecified,
         );
         let remote_nodes: Vec<(Keypair, SocketAddr)> =
             repeat_with(|| new_rand_remote_node(&mut rng))
@@ -3093,6 +3127,7 @@ mod tests {
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&this_node.pubkey(), timestamp()),
             this_node.clone(),
+            SocketAddrSpace::Unspecified,
         );
         let remote_nodes: Vec<(Keypair, SocketAddr)> =
             repeat_with(|| new_rand_remote_node(&mut rng))
@@ -3252,13 +3287,18 @@ mod tests {
         //check that gossip doesn't try to push to invalid addresses
         let node = Node::new_localhost();
         let (spy, _, _) = ClusterInfo::spy_node(solana_sdk::pubkey::new_rand(), 0);
-        let cluster_info = Arc::new(ClusterInfo::new_with_invalid_keypair(node.info));
+        let cluster_info = Arc::new(ClusterInfo::new(
+            node.info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        ));
         cluster_info.insert_info(spy);
         cluster_info.gossip.refresh_push_active_set(
             &cluster_info.id(),
             cluster_info.my_shred_version(),
             &HashMap::new(), // stakes
             None,            // gossip validators
+            &SocketAddrSpace::Unspecified,
         );
         let reqs = cluster_info.generate_new_gossip_requests(
             &thread_pool,
@@ -3269,7 +3309,7 @@ mod tests {
         );
         //assert none of the addrs are invalid.
         reqs.iter().all(|(addr, _)| {
-            let res = ContactInfo::is_valid_address(addr);
+            let res = ContactInfo::is_valid_address(addr, &SocketAddrSpace::Unspecified);
             assert!(res);
             res
         });
@@ -3278,14 +3318,19 @@ mod tests {
     #[test]
     fn test_cluster_info_new() {
         let d = ContactInfo::new_localhost(&solana_sdk::pubkey::new_rand(), timestamp());
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(d.clone());
+        let cluster_info = ClusterInfo::new(
+            d.clone(),
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
         assert_eq!(d.id, cluster_info.id());
     }
 
     #[test]
     fn insert_info_test() {
         let d = ContactInfo::new_localhost(&solana_sdk::pubkey::new_rand(), timestamp());
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(d);
+        let cluster_info =
+            ClusterInfo::new(d, Arc::new(Keypair::new()), SocketAddrSpace::Unspecified);
         let d = ContactInfo::new_localhost(&solana_sdk::pubkey::new_rand(), timestamp());
         let label = CrdsValueLabel::ContactInfo(d.id);
         cluster_info.insert_info(d);
@@ -3364,7 +3409,11 @@ mod tests {
         let peer_keypair = Keypair::new();
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
         let peer = ContactInfo::new_localhost(&peer_keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new(contact_info, Arc::new(keypair));
+        let cluster_info = ClusterInfo::new(
+            contact_info,
+            Arc::new(keypair),
+            SocketAddrSpace::Unspecified,
+        );
         cluster_info
             .ping_cache
             .lock()
@@ -3376,6 +3425,7 @@ mod tests {
             cluster_info.my_shred_version(),
             &HashMap::new(), // stakes
             None,            // gossip validators
+            &SocketAddrSpace::Unspecified,
         );
         //check that all types of gossip messages are signed correctly
         let push_messages = cluster_info
@@ -3400,6 +3450,7 @@ mod tests {
                 MAX_BLOOM_SIZE,
                 &cluster_info.ping_cache,
                 &mut pings,
+                &cluster_info.socket_addr_space,
             )
             .ok()
             .unwrap();
@@ -3409,7 +3460,11 @@ mod tests {
     fn test_refresh_vote() {
         let keys = Keypair::new();
         let contact_info = ContactInfo::new_localhost(&keys.pubkey(), 0);
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(contact_info);
+        let cluster_info = ClusterInfo::new(
+            contact_info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
 
         // Construct and push a vote for some other slot
         let unrefresh_slot = 5;
@@ -3496,7 +3551,11 @@ mod tests {
         let mut rng = rand::thread_rng();
         let keys = Keypair::new();
         let contact_info = ContactInfo::new_localhost(&keys.pubkey(), 0);
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(contact_info);
+        let cluster_info = ClusterInfo::new(
+            contact_info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
 
         // make sure empty crds is handled correctly
         let mut cursor = Cursor::default();
@@ -3567,7 +3626,11 @@ mod tests {
         let mut rng = rand::thread_rng();
         let keys = Keypair::new();
         let contact_info = ContactInfo::new_localhost(&keys.pubkey(), 0);
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(contact_info);
+        let cluster_info = ClusterInfo::new(
+            contact_info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
         let mut tower = Vec::new();
         for k in 0..MAX_LOCKOUT_HISTORY {
             let slot = k as Slot;
@@ -3613,7 +3676,11 @@ mod tests {
     fn test_push_epoch_slots() {
         let keys = Keypair::new();
         let contact_info = ContactInfo::new_localhost(&keys.pubkey(), 0);
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(contact_info);
+        let cluster_info = ClusterInfo::new(
+            contact_info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
         let slots = cluster_info.get_epoch_slots(&mut Cursor::default());
         assert!(slots.is_empty());
         cluster_info.push_epoch_slots(&[0]);
@@ -3670,6 +3737,7 @@ mod tests {
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
             node_keypair,
+            SocketAddrSpace::Unspecified,
         );
         let entrypoint_pubkey = solana_sdk::pubkey::new_rand();
         let entrypoint = ContactInfo::new_localhost(&entrypoint_pubkey, timestamp());
@@ -3820,7 +3888,11 @@ mod tests {
     #[test]
     fn test_tvu_peers_and_stakes() {
         let d = ContactInfo::new_localhost(&Pubkey::new(&[0; 32]), timestamp());
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(d.clone());
+        let cluster_info = ClusterInfo::new(
+            d.clone(),
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
         let mut stakes = HashMap::new();
 
         // no stake
@@ -3861,6 +3933,7 @@ mod tests {
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
             node_keypair,
+            SocketAddrSpace::Unspecified,
         );
         let entrypoint_pubkey = solana_sdk::pubkey::new_rand();
         let mut entrypoint = ContactInfo::new_localhost(&entrypoint_pubkey, timestamp());
@@ -3916,6 +3989,7 @@ mod tests {
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
             node_keypair,
+            SocketAddrSpace::Unspecified,
         );
         for i in 0..10 {
             // make these invalid for the upcoming repair request
@@ -3987,6 +4061,7 @@ mod tests {
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
             node_keypair,
+            SocketAddrSpace::Unspecified,
         );
         let mut range: Vec<Slot> = vec![];
         //random should be hard to compress
@@ -4034,6 +4109,7 @@ mod tests {
         let cluster_info = Arc::new(ClusterInfo::new(
             ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
             node_keypair,
+            SocketAddrSpace::Unspecified,
         ));
         assert_eq!(cluster_info.my_shred_version(), 0);
 
@@ -4117,6 +4193,7 @@ mod tests {
                 contact_info
             },
             node_keypair,
+            SocketAddrSpace::Unspecified,
         ));
         assert_eq!(cluster_info.my_shred_version(), 2);
 
@@ -4288,7 +4365,11 @@ mod tests {
     #[ignore] // TODO: debug why this is flaky on buildkite!
     fn test_pull_request_time_pruning() {
         let node = Node::new_localhost();
-        let cluster_info = Arc::new(ClusterInfo::new_with_invalid_keypair(node.info));
+        let cluster_info = Arc::new(ClusterInfo::new(
+            node.info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        ));
         let entrypoint_pubkey = solana_sdk::pubkey::new_rand();
         let entrypoint = ContactInfo::new_localhost(&entrypoint_pubkey, timestamp());
         cluster_info.set_entrypoint(entrypoint);

@@ -32,6 +32,7 @@ use {
         pubkey::Pubkey,
         signature::{Keypair, Signer},
     },
+    solana_streamer::socket::SocketAddrSpace,
     std::{
         collections::{HashMap, HashSet, VecDeque},
         convert::TryInto,
@@ -226,6 +227,7 @@ impl CrdsGossipPull {
         bloom_size: usize,
         ping_cache: &Mutex<PingCache>,
         pings: &mut Vec<(SocketAddr, Ping)>,
+        socket_addr_space: &SocketAddrSpace,
     ) -> Result<(ContactInfo, Vec<CrdsFilter>), CrdsGossipError> {
         let (weights, peers): (Vec<_>, Vec<_>) = {
             self.pull_options(
@@ -235,6 +237,7 @@ impl CrdsGossipPull {
                 now,
                 gossip_validators,
                 stakes,
+                socket_addr_space,
             )
             .into_iter()
             .map(|(weight, node, gossip_addr)| (weight, (node, gossip_addr)))
@@ -281,6 +284,7 @@ impl CrdsGossipPull {
         now: u64,
         gossip_validators: Option<&HashSet<Pubkey>>,
         stakes: &HashMap<Pubkey, u64>,
+        socket_addr_space: &SocketAddrSpace,
     ) -> Vec<(
         u64,        // weight
         Pubkey,     // node
@@ -307,7 +311,7 @@ impl CrdsGossipPull {
             })
             .filter(|v| {
                 v.id != *self_id
-                    && ContactInfo::is_valid_address(&v.gossip)
+                    && ContactInfo::is_valid_address(&v.gossip, socket_addr_space)
                     && (self_shred_version == 0 || self_shred_version == v.shred_version)
                     && gossip_validators
                         .map_or(true, |gossip_validators| gossip_validators.contains(&v.id))
@@ -734,7 +738,15 @@ pub(crate) mod tests {
         }
         let now = 1024;
         let crds = RwLock::new(crds);
-        let mut options = node.pull_options(&crds, &me.label().pubkey(), 0, now, None, &stakes);
+        let mut options = node.pull_options(
+            &crds,
+            &me.label().pubkey(),
+            0,
+            now,
+            None,
+            &stakes,
+            &SocketAddrSpace::Unspecified,
+        );
         assert!(!options.is_empty());
         options
             .sort_by(|(weight_l, _, _), (weight_r, _, _)| weight_r.partial_cmp(weight_l).unwrap());
@@ -783,7 +795,15 @@ pub(crate) mod tests {
 
         // shred version 123 should ignore nodes with versions 0 and 456
         let options = node
-            .pull_options(&crds, &me.label().pubkey(), 123, 0, None, &stakes)
+            .pull_options(
+                &crds,
+                &me.label().pubkey(),
+                123,
+                0,
+                None,
+                &stakes,
+                &SocketAddrSpace::Unspecified,
+            )
             .iter()
             .map(|(_, pk, _)| *pk)
             .collect::<Vec<_>>();
@@ -793,7 +813,15 @@ pub(crate) mod tests {
 
         // spy nodes will see all
         let options = node
-            .pull_options(&crds, &spy.label().pubkey(), 0, 0, None, &stakes)
+            .pull_options(
+                &crds,
+                &spy.label().pubkey(),
+                0,
+                0,
+                None,
+                &stakes,
+                &SocketAddrSpace::Unspecified,
+            )
             .iter()
             .map(|(_, pk, _)| *pk)
             .collect::<Vec<_>>();
@@ -834,6 +862,7 @@ pub(crate) mod tests {
             0,
             Some(&gossip_validators),
             &stakes,
+            &SocketAddrSpace::Unspecified,
         );
         assert!(options.is_empty());
 
@@ -846,6 +875,7 @@ pub(crate) mod tests {
             0,
             Some(&gossip_validators),
             &stakes,
+            &SocketAddrSpace::Unspecified,
         );
         assert!(options.is_empty());
 
@@ -858,6 +888,7 @@ pub(crate) mod tests {
             0,
             Some(&gossip_validators),
             &stakes,
+            &SocketAddrSpace::Unspecified,
         );
         assert_eq!(options.len(), 1);
         assert_eq!(options[0].1, node_123.pubkey());
@@ -978,6 +1009,7 @@ pub(crate) mod tests {
                 PACKET_DATA_SIZE,
                 &ping_cache,
                 &mut pings,
+                &SocketAddrSpace::Unspecified,
             ),
             Err(CrdsGossipError::NoPeers)
         );
@@ -995,6 +1027,7 @@ pub(crate) mod tests {
                 PACKET_DATA_SIZE,
                 &ping_cache,
                 &mut pings,
+                &SocketAddrSpace::Unspecified,
             ),
             Err(CrdsGossipError::NoPeers)
         );
@@ -1017,6 +1050,7 @@ pub(crate) mod tests {
             PACKET_DATA_SIZE,
             &ping_cache,
             &mut pings,
+            &SocketAddrSpace::Unspecified,
         );
         let (peer, _) = req.unwrap();
         assert_eq!(peer, *new.contact_info().unwrap());
@@ -1036,6 +1070,7 @@ pub(crate) mod tests {
             PACKET_DATA_SIZE,
             &ping_cache,
             &mut pings,
+            &SocketAddrSpace::Unspecified,
         );
         // Even though the offline node should have higher weight, we shouldn't request from it
         // until we receive a ping.
@@ -1091,6 +1126,7 @@ pub(crate) mod tests {
                     PACKET_DATA_SIZE, // bloom_size
                     &ping_cache,
                     &mut pings,
+                    &SocketAddrSpace::Unspecified,
                 )
                 .unwrap();
             peer
@@ -1170,6 +1206,7 @@ pub(crate) mod tests {
             PACKET_DATA_SIZE,
             &Mutex::new(ping_cache),
             &mut pings,
+            &SocketAddrSpace::Unspecified,
         );
 
         let dest_crds = RwLock::<Crds>::default();
@@ -1260,6 +1297,7 @@ pub(crate) mod tests {
             PACKET_DATA_SIZE,
             &Mutex::new(ping_cache),
             &mut pings,
+            &SocketAddrSpace::Unspecified,
         );
 
         let dest_crds = RwLock::<Crds>::default();
@@ -1339,6 +1377,7 @@ pub(crate) mod tests {
                 PACKET_DATA_SIZE,
                 &ping_cache,
                 &mut pings,
+                &SocketAddrSpace::Unspecified,
             );
             let (_, filters) = req.unwrap();
             let filters: Vec<_> = filters.into_iter().map(|f| (caller.clone(), f)).collect();

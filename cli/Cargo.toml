@@ -52,6 +52,7 @@ url = "2.2.2"
 
 [dev-dependencies]
 solana-core = { path = "../core", version = "=1.8.0" }
+solana-streamer = { path = "../streamer", version = "=1.8.0" }
 tempfile = "3.2.0"
 
 [[bin]]

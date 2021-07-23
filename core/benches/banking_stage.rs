@@ -31,6 +31,7 @@ use solana_sdk::system_instruction;
 use solana_sdk::system_transaction;
 use solana_sdk::timing::{duration_as_us, timestamp};
 use solana_sdk::transaction::Transaction;
+use solana_streamer::socket::SocketAddrSpace;
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::Receiver;
@@ -206,7 +207,11 @@ fn bench_banking(bencher: &mut Bencher, tx_type: TransactionType) {
         );
         let (exit, poh_recorder, poh_service, signal_receiver) =
             create_test_recorder(&bank, &blockstore, None);
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(Node::new_localhost().info);
+        let cluster_info = ClusterInfo::new(
+            Node::new_localhost().info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
         let cluster_info = Arc::new(cluster_info);
         let (s, _r) = unbounded();
         let _banking_stage = BankingStage::new(

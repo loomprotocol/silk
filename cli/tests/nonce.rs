@@ -18,13 +18,15 @@ use solana_sdk::{
     signature::{keypair_from_seed, Keypair, Signer},
     system_program,
 };
+use solana_streamer::socket::SocketAddrSpace;
 
 #[test]
 fn test_nonce() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator = TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr));
+    let test_validator =
+        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
 
     full_battery_tests(test_validator, None, false);
 }
@@ -34,7 +36,8 @@ fn test_nonce_with_seed() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator = TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr));
+    let test_validator =
+        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
 
     full_battery_tests(test_validator, Some(String::from("seed")), false);
 }
@@ -44,7 +47,8 @@ fn test_nonce_with_authority() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator = TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr));
+    let test_validator =
+        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
 
     full_battery_tests(test_validator, None, true);
 }
@@ -216,7 +220,12 @@ fn test_create_account_with_seed() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator = TestValidator::with_custom_fees(mint_pubkey, 1, Some(faucet_addr));
+    let test_validator = TestValidator::with_custom_fees(
+        mint_pubkey,
+        1,
+        Some(faucet_addr),
+        SocketAddrSpace::Unspecified,
+    );
 
     let offline_nonce_authority_signer = keypair_from_seed(&[1u8; 32]).unwrap();
     let online_nonce_creator_signer = keypair_from_seed(&[2u8; 32]).unwrap();

@@ -22,6 +22,7 @@ solana-logger = { path = "../logger", version = "=1.8.0" }
 solana-net-utils = { path = "../net-utils", version = "=1.8.0" }
 solana-runtime = { path = "../runtime", version = "=1.8.0" }
 solana-sdk = { path = "../sdk", version = "=1.8.0" }
+solana-streamer = { path = "../streamer", version = "=1.8.0" }
 solana-version = { path = "../version", version = "=1.8.0" }
 solana-client = { path = "../client", version = "=1.8.0" }
 

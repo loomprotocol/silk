@@ -6,6 +6,7 @@ use solana_client::rpc_client::RpcClient;
 use solana_core::serve_repair::RepairProtocol;
 use solana_gossip::{contact_info::ContactInfo, gossip_service::discover};
 use solana_sdk::pubkey::Pubkey;
+use solana_streamer::socket::SocketAddrSpace;
 use std::net::{SocketAddr, UdpSocket};
 use std::process::exit;
 use std::str::FromStr;
@@ -197,6 +198,13 @@ fn main() {
                 .long("skip-gossip")
                 .help("Just use entrypoint address directly"),
         )
+        .arg(
+            Arg::with_name("allow_private_addr")
+                .long("allow-private-addr")
+                .takes_value(false)
+                .help("Allow contacting private ip addresses")
+                .hidden(true),
+        )
         .get_matches();
 
     let mut entrypoint_addr = SocketAddr::from(([127, 0, 0, 1], 8001));
@@ -216,6 +224,7 @@ fn main() {
     let mut nodes = vec![];
     if !skip_gossip {
         info!("Finding cluster entry: {:?}", entrypoint_addr);
+        let socket_addr_space = SocketAddrSpace::new(matches.is_present("allow_private_addr"));
         let (gossip_nodes, _validators) = discover(
             None, // keypair
             Some(&entrypoint_addr),
@@ -225,6 +234,7 @@ fn main() {
             Some(&entrypoint_addr),  // find_node_by_gossip_addr
             None,                    // my_gossip_addr
             0,                       // my_shred_version
+            socket_addr_space,
         )
         .unwrap_or_else(|err| {
             eprintln!("Failed to discover {} node: {:?}", entrypoint_addr, err);

@@ -21,6 +21,7 @@ use solana_sdk::pubkey;
 use solana_sdk::signature::{Keypair, Signer};
 use solana_sdk::system_transaction;
 use solana_sdk::timing::timestamp;
+use solana_streamer::socket::SocketAddrSpace;
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::channel;
@@ -35,7 +36,11 @@ use test::Bencher;
 #[allow(clippy::same_item_push)]
 fn bench_retransmitter(bencher: &mut Bencher) {
     solana_logger::setup();
-    let cluster_info = ClusterInfo::new_with_invalid_keypair(Node::new_localhost().info);
+    let cluster_info = ClusterInfo::new(
+        Node::new_localhost().info,
+        Arc::new(Keypair::new()),
+        SocketAddrSpace::Unspecified,
+    );
     const NUM_PEERS: usize = 4;
     let mut peer_sockets = Vec::new();
     for _ in 0..NUM_PEERS {

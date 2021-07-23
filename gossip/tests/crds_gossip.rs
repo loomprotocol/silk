@@ -21,6 +21,7 @@ use {
         signature::{Keypair, Signer},
         timing::timestamp,
     },
+    solana_streamer::socket::SocketAddrSpace,
     std::{
         collections::{HashMap, HashSet},
         ops::Deref,
@@ -262,6 +263,7 @@ fn network_simulator(thread_pool: &ThreadPool, network: &mut Network, max_conver
             0,               // shred version
             &HashMap::new(), // stakes
             None,            // gossip validators
+            &SocketAddrSpace::Unspecified,
         );
     });
     let mut total_bytes = bytes_tx;
@@ -420,6 +422,7 @@ fn network_run_push(
                     0,               // shred version
                     &HashMap::new(), // stakes
                     None,            // gossip validators
+                    &SocketAddrSpace::Unspecified,
                 );
             });
         }
@@ -490,6 +493,7 @@ fn network_run_pull(
                             cluster_info::MAX_BLOOM_SIZE,
                             from.ping_cache.deref(),
                             &mut pings,
+                            &SocketAddrSpace::Unspecified,
                         )
                         .ok()?;
                     let from_pubkey = from.keypair.pubkey();
@@ -710,6 +714,7 @@ fn test_prune_errors() {
         0,               // shred version
         &HashMap::new(), // stakes
         None,            // gossip validators
+        &SocketAddrSpace::Unspecified,
     );
     let now = timestamp();
     //incorrect dest

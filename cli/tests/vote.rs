@@ -14,6 +14,7 @@ use solana_sdk::{
     commitment_config::CommitmentConfig,
     signature::{Keypair, Signer},
 };
+use solana_streamer::socket::SocketAddrSpace;
 use solana_vote_program::vote_state::{VoteAuthorize, VoteState, VoteStateVersions};
 
 #[test]
@@ -21,7 +22,8 @@ fn test_vote_authorize_and_withdraw() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator = TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr));
+    let test_validator =
+        TestValidator::with_no_fees(mint_pubkey, Some(faucet_addr), SocketAddrSpace::Unspecified);
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());

@@ -73,6 +73,7 @@ use solana_sdk::{
     signature::{Keypair, Signer},
     timing::timestamp,
 };
+use solana_streamer::socket::SocketAddrSpace;
 use solana_vote_program::vote_state::VoteState;
 use std::{
     collections::HashSet,
@@ -278,6 +279,7 @@ pub(crate) fn abort() -> ! {
 }
 
 impl Validator {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mut node: Node,
         identity_keypair: Arc<Keypair>,
@@ -288,6 +290,7 @@ impl Validator {
         config: &ValidatorConfig,
         should_check_duplicate_instance: bool,
         start_progress: Arc<RwLock<ValidatorStartProgress>>,
+        socket_addr_space: SocketAddrSpace,
     ) -> Self {
         let id = identity_keypair.pubkey();
         assert_eq!(id, node.info.id);
@@ -438,7 +441,8 @@ impl Validator {
             }
         }
 
-        let mut cluster_info = ClusterInfo::new(node.info.clone(), identity_keypair);
+        let mut cluster_info =
+            ClusterInfo::new(node.info.clone(), identity_keypair, socket_addr_space);
         cluster_info.set_contact_debug_interval(config.contact_debug_interval);
         cluster_info.set_entrypoints(cluster_entrypoints);
         cluster_info.restore_contact_info(ledger_path, config.contact_save_interval);
@@ -511,10 +515,16 @@ impl Validator {
             optimistically_confirmed_bank_tracker,
             bank_notification_sender,
         ) = if let Some((rpc_addr, rpc_pubsub_addr)) = config.rpc_addrs {
-            if ContactInfo::is_valid_address(&node.info.rpc) {
-                assert!(ContactInfo::is_valid_address(&node.info.rpc_pubsub));
+            if ContactInfo::is_valid_address(&node.info.rpc, &socket_addr_space) {
+                assert!(ContactInfo::is_valid_address(
+                    &node.info.rpc_pubsub,
+                    &socket_addr_space
+                ));
             } else {
-                assert!(!ContactInfo::is_valid_address(&node.info.rpc_pubsub));
+                assert!(!ContactInfo::is_valid_address(
+                    &node.info.rpc_pubsub,
+                    &socket_addr_space
+                ));
             }
             let (bank_notification_sender, bank_notification_receiver) = unbounded();
             (
@@ -595,6 +605,7 @@ impl Validator {
             &serve_repair,
             Some(blockstore.clone()),
             node.sockets.serve_repair,
+            socket_addr_space,
             &exit,
         );
 
@@ -1613,6 +1624,7 @@ mod tests {
             &config,
             true, // should_check_duplicate_instance
             start_progress.clone(),
+            SocketAddrSpace::Unspecified,
         );
         assert_eq!(
             *start_progress.read().unwrap(),
@@ -1691,6 +1703,7 @@ mod tests {
                     &config,
                     true, // should_check_duplicate_instance
                     Arc::new(RwLock::new(ValidatorStartProgress::default())),
+                    SocketAddrSpace::Unspecified,
                 )
             })
             .collect();
@@ -1716,6 +1729,7 @@ mod tests {
         let cluster_info = ClusterInfo::new(
             ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
             node_keypair,
+            SocketAddrSpace::Unspecified,
         );
 
         let (genesis_config, _mint_keypair) = create_genesis_config(1);

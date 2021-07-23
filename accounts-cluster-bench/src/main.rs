@@ -20,6 +20,7 @@ use solana_sdk::{
     timing::timestamp,
     transaction::Transaction,
 };
+use solana_streamer::socket::SocketAddrSpace;
 use solana_transaction_status::parse_token::spl_token_v2_0_instruction;
 use std::{
     net::SocketAddr,
@@ -670,6 +671,7 @@ fn main() {
             Some(&entrypoint_addr),  // find_node_by_gossip_addr
             None,                    // my_gossip_addr
             0,                       // my_shred_version
+            SocketAddrSpace::Unspecified,
         )
         .unwrap_or_else(|err| {
             eprintln!("Failed to discover {} node: {:?}", entrypoint_addr, err);
@@ -721,7 +723,7 @@ pub mod test {
         };
 
         let faucet_addr = SocketAddr::from(([127, 0, 0, 1], 9900));
-        let cluster = LocalCluster::new(&mut config);
+        let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
         let iterations = 10;
         let maybe_space = None;
         let batch_size = 100;

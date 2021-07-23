@@ -18,6 +18,7 @@ use solana_sdk::{
     signature::{keypair_from_seed, Keypair, NullSigner, Signer},
     stake,
 };
+use solana_streamer::socket::SocketAddrSpace;
 
 #[test]
 fn test_transfer() {
@@ -25,7 +26,12 @@ fn test_transfer() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator = TestValidator::with_custom_fees(mint_pubkey, 1, Some(faucet_addr));
+    let test_validator = TestValidator::with_custom_fees(
+        mint_pubkey,
+        1,
+        Some(faucet_addr),
+        SocketAddrSpace::Unspecified,
+    );
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -277,7 +283,12 @@ fn test_transfer_multisession_signing() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator = TestValidator::with_custom_fees(mint_pubkey, 1, Some(faucet_addr));
+    let test_validator = TestValidator::with_custom_fees(
+        mint_pubkey,
+        1,
+        Some(faucet_addr),
+        SocketAddrSpace::Unspecified,
+    );
 
     let to_pubkey = Pubkey::new(&[1u8; 32]);
     let offline_from_signer = keypair_from_seed(&[2u8; 32]).unwrap();
@@ -404,7 +415,12 @@ fn test_transfer_all() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator = TestValidator::with_custom_fees(mint_pubkey, 1, Some(faucet_addr));
+    let test_validator = TestValidator::with_custom_fees(
+        mint_pubkey,
+        1,
+        Some(faucet_addr),
+        SocketAddrSpace::Unspecified,
+    );
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -452,7 +468,12 @@ fn test_transfer_unfunded_recipient() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator = TestValidator::with_custom_fees(mint_pubkey, 1, Some(faucet_addr));
+    let test_validator = TestValidator::with_custom_fees(
+        mint_pubkey,
+        1,
+        Some(faucet_addr),
+        SocketAddrSpace::Unspecified,
+    );
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());
@@ -500,7 +521,12 @@ fn test_transfer_with_seed() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
     let faucet_addr = run_local_faucet(mint_keypair, None);
-    let test_validator = TestValidator::with_custom_fees(mint_pubkey, 1, Some(faucet_addr));
+    let test_validator = TestValidator::with_custom_fees(
+        mint_pubkey,
+        1,
+        Some(faucet_addr),
+        SocketAddrSpace::Unspecified,
+    );
 
     let rpc_client =
         RpcClient::new_with_commitment(test_validator.rpc_url(), CommitmentConfig::processed());

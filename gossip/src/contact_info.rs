@@ -7,6 +7,7 @@ use {
         signature::{Keypair, Signer},
         timing::timestamp,
     },
+    solana_streamer::socket::SocketAddrSpace,
     std::net::{IpAddr, SocketAddr},
 };
 
@@ -200,16 +201,22 @@ impl ContactInfo {
         (addr.port() != 0) && Self::is_valid_ip(addr.ip())
     }
 
-    pub fn is_valid_address(addr: &SocketAddr) -> bool {
-        Self::is_valid_tvu_address(addr) && solana_streamer::socket::is_global(addr)
+    // TODO: Replace this entirely with streamer SocketAddrSpace.
+    pub fn is_valid_address(addr: &SocketAddr, socket_addr_space: &SocketAddrSpace) -> bool {
+        Self::is_valid_tvu_address(addr) && socket_addr_space.check(addr)
     }
 
     pub fn client_facing_addr(&self) -> (SocketAddr, SocketAddr) {
         (self.rpc, self.tpu)
     }
 
-    pub fn valid_client_facing_addr(&self) -> Option<(SocketAddr, SocketAddr)> {
-        if ContactInfo::is_valid_address(&self.rpc) && ContactInfo::is_valid_address(&self.tpu) {
+    pub fn valid_client_facing_addr(
+        &self,
+        socket_addr_space: &SocketAddrSpace,
+    ) -> Option<(SocketAddr, SocketAddr)> {
+        if ContactInfo::is_valid_address(&self.rpc, socket_addr_space)
+            && ContactInfo::is_valid_address(&self.tpu, socket_addr_space)
+        {
             Some((self.rpc, self.tpu))
         } else {
             None
@@ -224,13 +231,25 @@ mod tests {
     #[test]
     fn test_is_valid_address() {
         let bad_address_port = socketaddr!("127.0.0.1:0");
-        assert!(!ContactInfo::is_valid_address(&bad_address_port));
+        assert!(!ContactInfo::is_valid_address(
+            &bad_address_port,
+            &SocketAddrSpace::Unspecified
+        ));
         let bad_address_unspecified = socketaddr!(0, 1234);
-        assert!(!ContactInfo::is_valid_address(&bad_address_unspecified));
+        assert!(!ContactInfo::is_valid_address(
+            &bad_address_unspecified,
+            &SocketAddrSpace::Unspecified
+        ));
         let bad_address_multicast = socketaddr!([224, 254, 0, 0], 1234);
-        assert!(!ContactInfo::is_valid_address(&bad_address_multicast));
+        assert!(!ContactInfo::is_valid_address(
+            &bad_address_multicast,
+            &SocketAddrSpace::Unspecified
+        ));
         let loopback = socketaddr!("127.0.0.1:1234");
-        assert!(ContactInfo::is_valid_address(&loopback));
+        assert!(ContactInfo::is_valid_address(
+            &loopback,
+            &SocketAddrSpace::Unspecified
+        ));
         //        assert!(!ContactInfo::is_valid_ip_internal(loopback.ip(), false));
     }
 
@@ -313,11 +332,19 @@ mod tests {
     #[test]
     fn test_valid_client_facing() {
         let mut ci = ContactInfo::default();
-        assert_eq!(ci.valid_client_facing_addr(), None);
+        assert_eq!(
+            ci.valid_client_facing_addr(&SocketAddrSpace::Unspecified),
+            None
+        );
         ci.tpu = socketaddr!("127.0.0.1:123");
-        assert_eq!(ci.valid_client_facing_addr(), None);
+        assert_eq!(
+            ci.valid_client_facing_addr(&SocketAddrSpace::Unspecified),
+            None
+        );
         ci.rpc = socketaddr!("127.0.0.1:234");
-        assert!(ci.valid_client_facing_addr().is_some());
+        assert!(ci
+            .valid_client_facing_addr(&SocketAddrSpace::Unspecified)
+            .is_some());
     }
 
     #[test]

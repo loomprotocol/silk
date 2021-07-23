@@ -223,13 +223,22 @@ mod tests {
         hash::hash,
         signature::{Keypair, Signer},
     };
+    use solana_streamer::socket::SocketAddrSpace;
+
+    fn new_test_cluster_info(contact_info: ContactInfo) -> ClusterInfo {
+        ClusterInfo::new(
+            contact_info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        )
+    }
 
     #[test]
     fn test_should_halt() {
         let keypair = Keypair::new();
 
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(contact_info);
+        let cluster_info = new_test_cluster_info(contact_info);
         let cluster_info = Arc::new(cluster_info);
 
         let mut trusted_validators = HashSet::new();
@@ -265,7 +274,7 @@ mod tests {
         let keypair = Keypair::new();
 
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(contact_info);
+        let cluster_info = new_test_cluster_info(contact_info);
         let cluster_info = Arc::new(cluster_info);
 
         let trusted_validators = HashSet::new();

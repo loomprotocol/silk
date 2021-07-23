@@ -39,6 +39,7 @@ solana-perf = { path = "../perf", version = "=1.8.0" }
 solana-poh = { path = "../poh", version = "=1.8.0" }
 solana-runtime = { path = "../runtime", version = "=1.8.0" }
 solana-sdk = { path = "../sdk", version = "=1.8.0" }
+solana-streamer = { path = "../streamer", version = "=1.8.0" }
 solana-storage-bigtable = { path = "../storage-bigtable", version = "=1.8.0" }
 solana-transaction-status = { path = "../transaction-status", version = "=1.8.0" }
 solana-version = { path = "../version", version = "=1.8.0" }

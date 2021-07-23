@@ -21,6 +21,7 @@ use solana_sdk::{
     system_transaction,
     transaction::Transaction,
 };
+use solana_streamer::socket::SocketAddrSpace;
 use solana_transaction_status::TransactionStatus;
 use std::{
     collections::HashSet,
@@ -58,7 +59,8 @@ fn test_rpc_send_tx() {
     solana_logger::setup();
 
     let alice = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(alice.pubkey(), None);
+    let test_validator =
+        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
     let rpc_url = test_validator.rpc_url();
 
     let bob_pubkey = solana_sdk::pubkey::new_rand();
@@ -122,7 +124,8 @@ fn test_rpc_invalid_requests() {
     solana_logger::setup();
 
     let alice = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(alice.pubkey(), None);
+    let test_validator =
+        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
     let rpc_url = test_validator.rpc_url();
 
     let bob_pubkey = solana_sdk::pubkey::new_rand();
@@ -153,7 +156,8 @@ fn test_rpc_invalid_requests() {
 fn test_rpc_slot_updates() {
     solana_logger::setup();
 
-    let test_validator = TestValidator::with_no_fees(Pubkey::new_unique(), None);
+    let test_validator =
+        TestValidator::with_no_fees(Pubkey::new_unique(), None, SocketAddrSpace::Unspecified);
 
     // Create the pub sub runtime
     let rt = Runtime::new().unwrap();
@@ -218,7 +222,8 @@ fn test_rpc_subscriptions() {
     solana_logger::setup();
 
     let alice = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(alice.pubkey(), None);
+    let test_validator =
+        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
     let transactions_socket = UdpSocket::bind("0.0.0.0:0").unwrap();
     transactions_socket.connect(test_validator.tpu()).unwrap();
@@ -385,7 +390,8 @@ fn test_rpc_subscriptions() {
 fn test_tpu_send_transaction() {
     let mint_keypair = Keypair::new();
     let mint_pubkey = mint_keypair.pubkey();
-    let test_validator = TestValidator::with_no_fees(mint_pubkey, None);
+    let test_validator =
+        TestValidator::with_no_fees(mint_pubkey, None, SocketAddrSpace::Unspecified);
     let rpc_client = Arc::new(RpcClient::new_with_commitment(
         test_validator.rpc_url(),
         CommitmentConfig::processed(),

@@ -13,6 +13,7 @@ use {
         pubkey::Pubkey,
         signature::{Keypair, Signer},
     },
+    solana_streamer::socket::SocketAddrSpace,
     solana_streamer::streamer,
     std::{
         collections::HashSet,
@@ -47,6 +48,7 @@ impl GossipService {
             &cluster_info.id(),
             gossip_socket.local_addr().unwrap()
         );
+        let socket_addr_space = *cluster_info.socket_addr_space();
         let t_receiver = streamer::receiver(
             gossip_socket.clone(),
             exit,
@@ -82,7 +84,12 @@ impl GossipService {
         // https://github.com/rust-lang/rust/issues/54267
         // responder thread should start after response_sender.clone(). see:
         // https://github.com/rust-lang/rust/issues/39364#issuecomment-381446873
-        let t_responder = streamer::responder("gossip", gossip_socket, response_receiver);
+        let t_responder = streamer::responder(
+            "gossip",
+            gossip_socket,
+            response_receiver,
+            socket_addr_space,
+        );
         let thread_hdls = vec![
             t_receiver,
             t_responder,
@@ -105,6 +112,7 @@ impl GossipService {
 pub fn discover_cluster(
     entrypoint: &SocketAddr,
     num_nodes: usize,
+    socket_addr_space: SocketAddrSpace,
 ) -> std::io::Result<Vec<ContactInfo>> {
     const DISCOVER_CLUSTER_TIMEOUT: Duration = Duration::from_secs(120);
     let (_all_peers, validators) = discover(
@@ -116,6 +124,7 @@ pub fn discover_cluster(
         None, // find_node_by_gossip_addr
         None, // my_gossip_addr
         0,    // my_shred_version
+        socket_addr_space,
     )?;
     Ok(validators)
 }
@@ -129,6 +138,7 @@ pub fn discover(
     find_node_by_gossip_addr: Option<&SocketAddr>,
     my_gossip_addr: Option<&SocketAddr>,
     my_shred_version: u16,
+    socket_addr_space: SocketAddrSpace,
 ) -> std::io::Result<(
     Vec<ContactInfo>, // all gossip peers
     Vec<ContactInfo>, // tvu peers (validators)
@@ -145,6 +155,7 @@ pub fn discover(
         my_gossip_addr,
         my_shred_version,
         true, // should_check_duplicate_instance,
+        socket_addr_space,
     );
 
     let id = spy_ref.id();
@@ -191,28 +202,31 @@ pub fn discover(
 }
 
 /// Creates a ThinClient per valid node
-pub fn get_clients(nodes: &[ContactInfo]) -> Vec<ThinClient> {
+pub fn get_clients(nodes: &[ContactInfo], socket_addr_space: &SocketAddrSpace) -> Vec<ThinClient> {
     nodes
         .iter()
-        .filter_map(ContactInfo::valid_client_facing_addr)
+        .filter_map(|node| ContactInfo::valid_client_facing_addr(node, socket_addr_space))
         .map(|addrs| create_client(addrs, VALIDATOR_PORT_RANGE))
         .collect()
 }
 
 /// Creates a ThinClient by selecting a valid node at random
-pub fn get_client(nodes: &[ContactInfo]) -> ThinClient {
+pub fn get_client(nodes: &[ContactInfo], socket_addr_space: &SocketAddrSpace) -> ThinClient {
     let nodes: Vec<_> = nodes
         .iter()
-        .filter_map(ContactInfo::valid_client_facing_addr)
+        .filter_map(|node| ContactInfo::valid_client_facing_addr(node, socket_addr_space))
         .collect();
     let select = thread_rng().gen_range(0, nodes.len());
     create_client(nodes[select], VALIDATOR_PORT_RANGE)
 }
 
-pub fn get_multi_client(nodes: &[ContactInfo]) -> (ThinClient, usize) {
+pub fn get_multi_client(
+    nodes: &[ContactInfo],
+    socket_addr_space: &SocketAddrSpace,
+) -> (ThinClient, usize) {
     let addrs: Vec<_> = nodes
         .iter()
-        .filter_map(ContactInfo::valid_client_facing_addr)
+        .filter_map(|node| ContactInfo::valid_client_facing_addr(node, socket_addr_space))
         .collect();
     let rpc_addrs: Vec<_> = addrs.iter().map(|addr| addr.0).collect();
     let tpu_addrs: Vec<_> = addrs.iter().map(|addr| addr.1).collect();
@@ -303,13 +317,14 @@ pub fn make_gossip_node(
     gossip_addr: Option<&SocketAddr>,
     shred_version: u16,
     should_check_duplicate_instance: bool,
+    socket_addr_space: SocketAddrSpace,
 ) -> (GossipService, Option<TcpListener>, Arc<ClusterInfo>) {
     let (node, gossip_socket, ip_echo) = if let Some(gossip_addr) = gossip_addr {
         ClusterInfo::gossip_node(keypair.pubkey(), gossip_addr, shred_version)
     } else {
         ClusterInfo::spy_node(keypair.pubkey(), shred_version)
     };
-    let cluster_info = ClusterInfo::new(node, Arc::new(keypair));
+    let cluster_info = ClusterInfo::new(node, Arc::new(keypair), socket_addr_space);
     if let Some(entrypoint) = entrypoint {
         cluster_info.set_entrypoint(ContactInfo::new_gossip_entry_point(entrypoint));
     }
@@ -339,7 +354,11 @@ mod tests {
     fn test_exit() {
         let exit = Arc::new(AtomicBool::new(false));
         let tn = Node::new_localhost();
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(tn.info.clone());
+        let cluster_info = ClusterInfo::new(
+            tn.info.clone(),
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
         let c = Arc::new(cluster_info);
         let d = GossipService::new(
             &c,
@@ -362,7 +381,11 @@ mod tests {
         let contact_info = ContactInfo::new_localhost(&keypair.pubkey(), 0);
         let peer0_info = ContactInfo::new_localhost(&peer0, 0);
         let peer1_info = ContactInfo::new_localhost(&peer1, 0);
-        let cluster_info = ClusterInfo::new(contact_info, Arc::new(keypair));
+        let cluster_info = ClusterInfo::new(
+            contact_info,
+            Arc::new(keypair),
+            SocketAddrSpace::Unspecified,
+        );
         cluster_info.insert_info(peer0_info.clone());
         cluster_info.insert_info(peer1_info);
 

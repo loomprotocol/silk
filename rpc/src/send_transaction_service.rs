@@ -333,6 +333,7 @@ mod test {
             system_program, system_transaction,
             timing::timestamp,
         },
+        solana_streamer::socket::SocketAddrSpace,
         std::sync::{atomic::AtomicBool, mpsc::channel},
     };
 
@@ -821,6 +822,7 @@ mod test {
             let cluster_info = Arc::new(ClusterInfo::new(
                 ContactInfo::new_localhost(&node_keypair.pubkey(), timestamp()),
                 node_keypair,
+                SocketAddrSpace::Unspecified,
             ));
 
             let validator0_socket = SocketAddr::from(([127, 0, 0, 1], 1111));

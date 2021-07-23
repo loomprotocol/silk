@@ -1,7 +1,7 @@
 use crate::serve_repair::ServeRepair;
 use solana_ledger::blockstore::Blockstore;
 use solana_perf::recycler::Recycler;
-use solana_streamer::streamer;
+use solana_streamer::{socket::SocketAddrSpace, streamer};
 use std::net::UdpSocket;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc::channel;
@@ -17,6 +17,7 @@ impl ServeRepairService {
         serve_repair: &Arc<RwLock<ServeRepair>>,
         blockstore: Option<Arc<Blockstore>>,
         serve_repair_socket: UdpSocket,
+        socket_addr_space: SocketAddrSpace,
         exit: &Arc<AtomicBool>,
     ) -> Self {
         let (request_sender, request_receiver) = channel();
@@ -36,8 +37,12 @@ impl ServeRepairService {
             false,
         );
         let (response_sender, response_receiver) = channel();
-        let t_responder =
-            streamer::responder("serve-repairs", serve_repair_socket, response_receiver);
+        let t_responder = streamer::responder(
+            "serve-repairs",
+            serve_repair_socket,
+            response_receiver,
+            socket_addr_space,
+        );
         let t_listen = ServeRepair::listen(
             serve_repair.clone(),
             blockstore,

@@ -561,13 +561,23 @@ impl RepairService {
 #[cfg(test)]
 mod test {
     use super::*;
-    use solana_gossip::cluster_info::Node;
+    use solana_gossip::{cluster_info::Node, contact_info::ContactInfo};
     use solana_ledger::blockstore::{
         make_chaining_slot_entries, make_many_slot_entries, make_slot_entries,
     };
     use solana_ledger::shred::max_ticks_per_n_shreds;
     use solana_ledger::{blockstore::Blockstore, get_tmp_ledger_path};
+    use solana_sdk::signature::Keypair;
+    use solana_streamer::socket::SocketAddrSpace;
     use std::collections::HashSet;
+
+    fn new_test_cluster_info(contact_info: ContactInfo) -> ClusterInfo {
+        ClusterInfo::new(
+            contact_info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        )
+    }
 
     #[test]
     pub fn test_repair_orphan() {
@@ -863,7 +873,8 @@ mod test {
         let blockstore_path = get_tmp_ledger_path!();
         let blockstore = Blockstore::open(&blockstore_path).unwrap();
         let cluster_slots = ClusterSlots::default();
-        let serve_repair = ServeRepair::new_with_invalid_keypair(Node::new_localhost().info);
+        let serve_repair =
+            ServeRepair::new(Arc::new(new_test_cluster_info(Node::new_localhost().info)));
         let mut ancestor_hashes_request_statuses = HashMap::new();
         let dead_slot = 9;
         let receive_socket = &UdpSocket::bind("0.0.0.0:0").unwrap();
@@ -946,9 +957,7 @@ mod test {
             Pubkey::default(),
             UdpSocket::bind("0.0.0.0:0").unwrap().local_addr().unwrap(),
         ));
-        let cluster_info = Arc::new(ClusterInfo::new_with_invalid_keypair(
-            Node::new_localhost().info,
-        ));
+        let cluster_info = Arc::new(new_test_cluster_info(Node::new_localhost().info));
         let serve_repair = ServeRepair::new(cluster_info.clone());
         let valid_repair_peer = Node::new_localhost().info;
 

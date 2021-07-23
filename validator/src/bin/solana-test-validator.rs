@@ -21,6 +21,7 @@ use {
         signature::{read_keypair_file, write_keypair_file, Keypair, Signer},
         system_program,
     },
+    solana_streamer::socket::SocketAddrSpace,
     solana_validator::{
         admin_rpc_service, dashboard::Dashboard, println_name_value, redirect_stderr_to_file,
         test_validator::*,
@@ -278,8 +279,16 @@ fn main() {
                      If the ledger already exists then this parameter is silently ignored",
                 ),
         )
+        .arg(
+            Arg::with_name("allow_private_addr")
+                .long("allow-private-addr")
+                .takes_value(false)
+                .help("Allow contacting private ip addresses")
+                .hidden(true),
+        )
         .get_matches();
 
+    let socket_addr_space = SocketAddrSpace::new(matches.is_present("allow_private_addr"));
     let cli_config = if let Some(config_file) = matches.value_of("config_file") {
         solana_cli_config::Config::load(config_file).unwrap_or_default()
     } else {
@@ -584,7 +593,7 @@ fn main() {
         genesis.bind_ip_addr(bind_address);
     }
 
-    match genesis.start_with_mint_address(mint_address) {
+    match genesis.start_with_mint_address(mint_address, socket_addr_space) {
         Ok(test_validator) => {
             *admin_service_cluster_info.write().unwrap() = Some(test_validator.cluster_info());
             if let Some(dashboard) = dashboard {

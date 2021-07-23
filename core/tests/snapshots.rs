@@ -62,6 +62,7 @@ mod tests {
         signature::{Keypair, Signer},
         system_transaction,
     };
+    use solana_streamer::socket::SocketAddrSpace;
     use std::{
         collections::HashSet,
         fs,
@@ -452,7 +453,11 @@ mod tests {
         // channel hold hard links to these deleted snapshots. We verify this is the case below.
         let exit = Arc::new(AtomicBool::new(false));
 
-        let cluster_info = Arc::new(ClusterInfo::new_with_invalid_keypair(ContactInfo::default()));
+        let cluster_info = Arc::new(ClusterInfo::new(
+            ContactInfo::default(),
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        ));
 
         let pending_snapshot_package = PendingSnapshotPackage::default();
         let snapshot_packager_service = SnapshotPackagerService::new(

@@ -2753,6 +2753,7 @@ pub mod tests {
         system_transaction,
         transaction::TransactionError,
     };
+    use solana_streamer::socket::SocketAddrSpace;
     use solana_transaction_status::TransactionWithStatusMeta;
     use solana_vote_program::{
         vote_state::{VoteState, VoteStateVersions},
@@ -2829,6 +2830,7 @@ pub mod tests {
         let cluster_info = ClusterInfo::new(
             Node::new_localhost_with_pubkey(&my_pubkey).info,
             Arc::new(Keypair::from_bytes(&my_keypairs.node_keypair.to_bytes()).unwrap()),
+            SocketAddrSpace::Unspecified,
         );
         assert_eq!(my_pubkey, cluster_info.id());
 

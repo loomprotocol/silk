@@ -367,6 +367,7 @@ impl StandardBroadcastRun {
             &mut transmit_stats,
             cluster_info.id(),
             bank_forks,
+            cluster_info.socket_addr_space(),
         )?;
         drop(cluster_nodes);
         transmit_time.stop();
@@ -510,6 +511,7 @@ mod test {
         genesis_config::GenesisConfig,
         signature::{Keypair, Signer},
     };
+    use solana_streamer::socket::SocketAddrSpace;
     use std::ops::Deref;
     use std::sync::Arc;
     use std::time::Duration;
@@ -534,7 +536,11 @@ mod test {
         let leader_keypair = Arc::new(Keypair::new());
         let leader_pubkey = leader_keypair.pubkey();
         let leader_info = Node::new_localhost_with_pubkey(&leader_pubkey);
-        let cluster_info = Arc::new(ClusterInfo::new_with_invalid_keypair(leader_info.info));
+        let cluster_info = Arc::new(ClusterInfo::new(
+            leader_info.info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        ));
         let socket = UdpSocket::bind("0.0.0.0:0").unwrap();
         let mut genesis_config = create_genesis_config(10_000).genesis_config;
         genesis_config.ticks_per_slot = max_ticks_per_n_shreds(num_shreds_per_slot, None) + 1;

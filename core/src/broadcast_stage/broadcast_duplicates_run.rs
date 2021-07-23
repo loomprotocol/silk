@@ -295,6 +295,7 @@ impl BroadcastRun for BroadcastDuplicatesRun {
             &mut TransmitShredsStats::default(),
             cluster_info.id(),
             bank_forks,
+            cluster_info.socket_addr_space(),
         )?;
 
         Ok(())

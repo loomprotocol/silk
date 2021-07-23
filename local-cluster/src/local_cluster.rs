@@ -37,6 +37,7 @@ use solana_sdk::{
     transaction::Transaction,
 };
 use solana_stake_program::{config::create_account as create_stake_config_account, stake_state};
+use solana_streamer::socket::SocketAddrSpace;
 use solana_vote_program::{
     vote_instruction,
     vote_state::{VoteInit, VoteState},
@@ -108,6 +109,7 @@ impl LocalCluster {
         num_nodes: usize,
         cluster_lamports: u64,
         lamports_per_node: u64,
+        socket_addr_space: SocketAddrSpace,
     ) -> Self {
         let stakes: Vec<_> = (0..num_nodes).map(|_| lamports_per_node).collect();
         let mut config = ClusterConfig {
@@ -119,10 +121,10 @@ impl LocalCluster {
             ),
             ..ClusterConfig::default()
         };
-        Self::new(&mut config)
+        Self::new(&mut config, socket_addr_space)
     }
 
-    pub fn new(config: &mut ClusterConfig) -> Self {
+    pub fn new(config: &mut ClusterConfig, socket_addr_space: SocketAddrSpace) -> Self {
         assert_eq!(config.validator_configs.len(), config.node_stakes.len());
         let mut validator_keys = {
             if let Some(ref keys) = config.validator_keys {
@@ -219,6 +221,7 @@ impl LocalCluster {
             &leader_config,
             true, // should_check_duplicate_instance
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
+            socket_addr_space,
         );
 
         let mut validators = HashMap::new();
@@ -262,22 +265,35 @@ impl LocalCluster {
                 *stake,
                 key.clone(),
                 node_pubkey_to_vote_key.get(&key.pubkey()).cloned(),
+                socket_addr_space,
             );
         }
 
         let mut listener_config = safe_clone_config(&config.validator_configs[0]);
         listener_config.voting_disabled = true;
         (0..config.num_listeners).for_each(|_| {
-            cluster.add_validator(&listener_config, 0, Arc::new(Keypair::new()), None);
+            cluster.add_validator(
+                &listener_config,
+                0,
+                Arc::new(Keypair::new()),
+                None,
+                socket_addr_space,
+            );
         });
 
         discover_cluster(
             &cluster.entry_point_info.gossip,
             config.node_stakes.len() + config.num_listeners as usize,
+            socket_addr_space,
         )
         .unwrap();
 
-        discover_cluster(&cluster.entry_point_info.gossip, config.node_stakes.len()).unwrap();
+        discover_cluster(
+            &cluster.entry_point_info.gossip,
+            config.node_stakes.len(),
+            socket_addr_space,
+        )
+        .unwrap();
 
         cluster
     }
@@ -305,6 +321,7 @@ impl LocalCluster {
         stake: u64,
         validator_keypair: Arc<Keypair>,
         mut voting_keypair: Option<Arc<Keypair>>,
+        socket_addr_space: SocketAddrSpace,
     ) -> Pubkey {
         let client = create_client(
             self.entry_point_info.client_facing_addr(),
@@ -361,6 +378,7 @@ impl LocalCluster {
             &config,
             true, // should_check_duplicate_instance
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
+            socket_addr_space,
         );
 
         let validator_pubkey = validator_keypair.pubkey();
@@ -400,7 +418,12 @@ impl LocalCluster {
         Self::transfer_with_client(&client, source_keypair, dest_pubkey, lamports)
     }
 
-    pub fn check_for_new_roots(&self, num_new_roots: usize, test_name: &str) {
+    pub fn check_for_new_roots(
+        &self,
+        num_new_roots: usize,
+        test_name: &str,
+        socket_addr_space: SocketAddrSpace,
+    ) {
         let alive_node_contact_infos: Vec<_> = self
             .validators
             .values()
@@ -411,6 +434,7 @@ impl LocalCluster {
         let cluster_nodes = discover_cluster(
             &alive_node_contact_infos[0].gossip,
             alive_node_contact_infos.len(),
+            socket_addr_space,
         )
         .unwrap();
         info!("{} discovered {} nodes", test_name, cluster_nodes.len());
@@ -419,7 +443,12 @@ impl LocalCluster {
         info!("{} done waiting for roots", test_name);
     }
 
-    pub fn check_no_new_roots(&self, num_slots_to_wait: usize, test_name: &str) {
+    pub fn check_no_new_roots(
+        &self,
+        num_slots_to_wait: usize,
+        test_name: &str,
+        socket_addr_space: SocketAddrSpace,
+    ) {
         let alive_node_contact_infos: Vec<_> = self
             .validators
             .values()
@@ -430,6 +459,7 @@ impl LocalCluster {
         let cluster_nodes = discover_cluster(
             &alive_node_contact_infos[0].gossip,
             alive_node_contact_infos.len(),
+            socket_addr_space,
         )
         .unwrap();
         info!("{} discovered {} nodes", test_name, cluster_nodes.len());
@@ -646,10 +676,18 @@ impl Cluster for LocalCluster {
         (node, entry_point_info)
     }
 
-    fn restart_node(&mut self, pubkey: &Pubkey, mut cluster_validator_info: ClusterValidatorInfo) {
+    fn restart_node(
+        &mut self,
+        pubkey: &Pubkey,
+        mut cluster_validator_info: ClusterValidatorInfo,
+        socket_addr_space: SocketAddrSpace,
+    ) {
         let restart_context = self.create_restart_context(pubkey, &mut cluster_validator_info);
-        let cluster_validator_info =
-            Self::restart_node_with_context(cluster_validator_info, restart_context);
+        let cluster_validator_info = Self::restart_node_with_context(
+            cluster_validator_info,
+            restart_context,
+            socket_addr_space,
+        );
         self.add_node(pubkey, cluster_validator_info);
     }
 
@@ -660,6 +698,7 @@ impl Cluster for LocalCluster {
     fn restart_node_with_context(
         mut cluster_validator_info: ClusterValidatorInfo,
         (node, entry_point_info): (Node, Option<ContactInfo>),
+        socket_addr_space: SocketAddrSpace,
     ) -> ClusterValidatorInfo {
         // Restart the node
         let validator_info = &cluster_validator_info.info;
@@ -677,15 +716,21 @@ impl Cluster for LocalCluster {
             &safe_clone_config(&cluster_validator_info.config),
             true, // should_check_duplicate_instance
             Arc::new(RwLock::new(ValidatorStartProgress::default())),
+            socket_addr_space,
         );
         cluster_validator_info.validator = Some(restarted_node);
         cluster_validator_info
     }
 
-    fn exit_restart_node(&mut self, pubkey: &Pubkey, validator_config: ValidatorConfig) {
+    fn exit_restart_node(
+        &mut self,
+        pubkey: &Pubkey,
+        validator_config: ValidatorConfig,
+        socket_addr_space: SocketAddrSpace,
+    ) {
         let mut cluster_validator_info = self.exit_node(pubkey);
         cluster_validator_info.config = validator_config;
-        self.restart_node(pubkey, cluster_validator_info);
+        self.restart_node(pubkey, cluster_validator_info, socket_addr_space);
     }
 
     fn get_contact_info(&self, pubkey: &Pubkey) -> Option<&ContactInfo> {
@@ -708,7 +753,8 @@ mod test {
     fn test_local_cluster_start_and_exit() {
         solana_logger::setup();
         let num_nodes = 1;
-        let cluster = LocalCluster::new_with_equal_stakes(num_nodes, 100, 3);
+        let cluster =
+            LocalCluster::new_with_equal_stakes(num_nodes, 100, 3, SocketAddrSpace::Unspecified);
         assert_eq!(cluster.validators.len(), num_nodes);
     }
 
@@ -728,7 +774,7 @@ mod test {
             stakers_slot_offset: MINIMUM_SLOTS_PER_EPOCH as u64,
             ..ClusterConfig::default()
         };
-        let cluster = LocalCluster::new(&mut config);
+        let cluster = LocalCluster::new(&mut config, SocketAddrSpace::Unspecified);
         assert_eq!(cluster.validators.len(), NUM_NODES);
     }
 }

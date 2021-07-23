@@ -330,6 +330,7 @@ fn retransmit(
     epoch_cache_update.stop();
 
     let my_id = cluster_info.id();
+    let socket_addr_space = cluster_info.socket_addr_space();
     let mut discard_total = 0;
     let mut repair_total = 0;
     let mut retransmit_total = 0;
@@ -399,6 +400,7 @@ fn retransmit(
                 packet,
                 sock,
                 /*forward socket=*/ true,
+                socket_addr_space,
             );
         }
         ClusterInfo::retransmit_to(
@@ -406,6 +408,7 @@ fn retransmit(
             packet,
             sock,
             !anchor_node, // send to forward socket!
+            socket_addr_space,
         );
         retransmit_time.stop();
         retransmit_total += retransmit_time.as_us();
@@ -629,6 +632,8 @@ mod tests {
     use solana_ledger::shred::Shred;
     use solana_net_utils::find_available_port_in_range;
     use solana_perf::packet::{Packet, Packets};
+    use solana_sdk::signature::Keypair;
+    use solana_streamer::socket::SocketAddrSpace;
     use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
@@ -665,7 +670,11 @@ mod tests {
             .find(|pk| me.id < *pk)
             .unwrap();
         let other = ContactInfo::new_localhost(&other, 0);
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(other);
+        let cluster_info = ClusterInfo::new(
+            other,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
         cluster_info.insert_info(me);
 
         let retransmit_socket = Arc::new(vec![UdpSocket::bind("0.0.0.0:0").unwrap()]);

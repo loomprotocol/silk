@@ -246,8 +246,9 @@ mod tests {
                 sorted_stakes_with_index,
             },
         },
-        solana_sdk::timing::timestamp,
-        std::iter::repeat_with,
+        solana_sdk::{signature::Keypair, timing::timestamp},
+        solana_streamer::socket::SocketAddrSpace,
+        std::{iter::repeat_with, sync::Arc},
     };
 
     // Legacy methods copied for testing backward compatibility.
@@ -293,7 +294,11 @@ mod tests {
             .collect();
         // Add some staked nodes with no contact-info.
         stakes.extend(repeat_with(|| (Pubkey::new_unique(), rng.gen_range(0, 20))).take(100));
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(this_node);
+        let cluster_info = ClusterInfo::new(
+            this_node,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
         {
             let now = timestamp();
             let mut gossip_crds = cluster_info.gossip.crds.write().unwrap();

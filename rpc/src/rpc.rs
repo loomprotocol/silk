@@ -69,6 +69,7 @@ use {
         sysvar::stake_history,
         transaction::{self, Transaction, TransactionError},
     },
+    solana_streamer::socket::SocketAddrSpace,
     solana_transaction_status::{
         EncodedConfirmedTransaction, Reward, RewardType, TransactionConfirmationStatus,
         TransactionStatus, UiConfirmedBlock, UiTransactionEncoding,
@@ -276,7 +277,7 @@ impl JsonRpcRequestProcessor {
     }
 
     // Useful for unit testing
-    pub fn new_from_bank(bank: &Arc<Bank>) -> Self {
+    pub fn new_from_bank(bank: &Arc<Bank>, socket_addr_space: SocketAddrSpace) -> Self {
         let genesis_hash = bank.hash();
         let bank_forks = Arc::new(RwLock::new(BankForks::new_from_banks(
             &[bank.clone()],
@@ -284,7 +285,11 @@ impl JsonRpcRequestProcessor {
         )));
         let blockstore = Arc::new(Blockstore::open(&get_tmp_ledger_path!()).unwrap());
         let exit = Arc::new(AtomicBool::new(false));
-        let cluster_info = Arc::new(ClusterInfo::default());
+        let cluster_info = Arc::new(ClusterInfo::new(
+            ContactInfo::default(),
+            Arc::new(Keypair::new()),
+            socket_addr_space,
+        ));
         let tpu_address = cluster_info.my_contact_info().tpu;
         let (sender, receiver) = channel();
         SendTransactionService::new(tpu_address, &bank_forks, None, receiver, 1000, 1);
@@ -3097,20 +3102,21 @@ pub mod rpc_full {
         fn get_cluster_nodes(&self, meta: Self::Metadata) -> Result<Vec<RpcContactInfo>> {
             debug!("get_cluster_nodes rpc request received");
             let cluster_info = &meta.cluster_info;
-            fn valid_address_or_none(addr: &SocketAddr) -> Option<SocketAddr> {
-                if ContactInfo::is_valid_address(addr) {
+            let socket_addr_space = cluster_info.socket_addr_space();
+            let valid_address_or_none = |addr: &SocketAddr| -> Option<SocketAddr> {
+                if ContactInfo::is_valid_address(addr, socket_addr_space) {
                     Some(*addr)
                 } else {
                     None
                 }
-            }
+            };
             let my_shred_version = cluster_info.my_shred_version();
             Ok(cluster_info
                 .all_peers()
                 .iter()
                 .filter_map(|(contact_info, _)| {
                     if my_shred_version == contact_info.shred_version
-                        && ContactInfo::is_valid_address(&contact_info.gossip)
+                        && ContactInfo::is_valid_address(&contact_info.gossip, socket_addr_space)
                     {
                         let (version, feature_set) = if let Some(version) =
                             cluster_info.get_node_version(&contact_info.id)
@@ -4147,10 +4153,14 @@ pub mod tests {
         let tx = system_transaction::transfer(&alice, pubkey, std::u64::MAX, blockhash);
         let _ = bank.process_transaction(&tx);
 
-        let cluster_info = Arc::new(ClusterInfo::new_with_invalid_keypair(ContactInfo {
-            id: alice.pubkey(),
-            ..ContactInfo::default()
-        }));
+        let cluster_info = Arc::new(ClusterInfo::new(
+            ContactInfo {
+                id: alice.pubkey(),
+                ..ContactInfo::default()
+            },
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        ));
         let tpu_address = cluster_info.my_contact_info().tpu;
 
         cluster_info.insert_info(ContactInfo::new_with_pubkey_socketaddr(
@@ -4226,7 +4236,8 @@ pub mod tests {
         let bank = Arc::new(Bank::new(&genesis.genesis_config));
         bank.transfer(20, &genesis.mint_keypair, &bob_pubkey)
             .unwrap();
-        let request_processor = JsonRpcRequestProcessor::new_from_bank(&bank);
+        let request_processor =
+            JsonRpcRequestProcessor::new_from_bank(&bank, SocketAddrSpace::Unspecified);
         assert_eq!(request_processor.get_transaction_count(None), 1);
     }
 
@@ -4235,7 +4246,7 @@ pub mod tests {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Arc::new(Bank::new(&genesis.genesis_config));
-        let meta = JsonRpcRequestProcessor::new_from_bank(&bank);
+        let meta = JsonRpcRequestProcessor::new_from_bank(&bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -4263,7 +4274,7 @@ pub mod tests {
         let genesis = create_genesis_config(20);
         let mint_pubkey = genesis.mint_keypair.pubkey();
         let bank = Arc::new(Bank::new(&genesis.genesis_config));
-        let meta = JsonRpcRequestProcessor::new_from_bank(&bank);
+        let meta = JsonRpcRequestProcessor::new_from_bank(&bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -4404,7 +4415,7 @@ pub mod tests {
         bank.transfer(4, &genesis.mint_keypair, &bob_pubkey)
             .unwrap();
 
-        let meta = JsonRpcRequestProcessor::new_from_bank(&bank);
+        let meta = JsonRpcRequestProcessor::new_from_bank(&bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_minimal::MinimalImpl.to_delegate());
@@ -5708,7 +5719,7 @@ pub mod tests {
     fn test_rpc_send_bad_tx() {
         let genesis = create_genesis_config(100);
         let bank = Arc::new(Bank::new(&genesis.genesis_config));
-        let meta = JsonRpcRequestProcessor::new_from_bank(&bank);
+        let meta = JsonRpcRequestProcessor::new_from_bank(&bank, SocketAddrSpace::Unspecified);
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_full::FullImpl.to_delegate());
@@ -5735,8 +5746,10 @@ pub mod tests {
 
         let mut io = MetaIoHandler::default();
         io.extend_with(rpc_full::FullImpl.to_delegate());
-        let cluster_info = Arc::new(ClusterInfo::new_with_invalid_keypair(
+        let cluster_info = Arc::new(ClusterInfo::new(
             ContactInfo::new_with_socketaddr(&socketaddr!("127.0.0.1:1234")),
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
         ));
         let tpu_address = cluster_info.my_contact_info().tpu;
         let (meta, receiver) = JsonRpcRequestProcessor::new(
@@ -6016,7 +6029,11 @@ pub mod tests {
             CommitmentSlots::new_from_slot(bank_forks.read().unwrap().highest_slot()),
         )));
 
-        let cluster_info = Arc::new(ClusterInfo::default());
+        let cluster_info = Arc::new(ClusterInfo::new(
+            ContactInfo::default(),
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        ));
         let tpu_address = cluster_info.my_contact_info().tpu;
         let (request_processor, receiver) = JsonRpcRequestProcessor::new(
             JsonRpcConfig::default(),
@@ -7414,8 +7431,11 @@ pub mod tests {
         let ledger_path = get_tmp_ledger_path!();
         let blockstore = Arc::new(Blockstore::open(&ledger_path).unwrap());
         let block_commitment_cache = Arc::new(RwLock::new(BlockCommitmentCache::default()));
-        let cluster_info = Arc::new(ClusterInfo::default());
-
+        let cluster_info = Arc::new(ClusterInfo::new(
+            ContactInfo::default(),
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        ));
         let GenesisConfigInfo { genesis_config, .. } = create_genesis_config(100);
         let bank = Bank::new(&genesis_config);
 

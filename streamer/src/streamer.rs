@@ -1,8 +1,11 @@
 //! The `streamer` module defines a set of services for efficiently pulling data from UDP sockets.
 //!
 
-use crate::packet::{self, send_to, Packets, PacketsRecycler, PACKETS_PER_BATCH};
-use crate::recvmmsg::NUM_RCVMMSGS;
+use crate::{
+    packet::{self, send_to, Packets, PacketsRecycler, PACKETS_PER_BATCH},
+    recvmmsg::NUM_RCVMMSGS,
+    socket::SocketAddrSpace,
+};
 use solana_sdk::timing::{duration_as_ms, timestamp};
 use std::net::UdpSocket;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -112,10 +115,14 @@ pub fn receiver(
         .unwrap()
 }
 
-fn recv_send(sock: &UdpSocket, r: &PacketReceiver) -> Result<()> {
+fn recv_send(
+    sock: &UdpSocket,
+    r: &PacketReceiver,
+    socket_addr_space: &SocketAddrSpace,
+) -> Result<()> {
     let timer = Duration::new(1, 0);
     let msgs = r.recv_timeout(timer)?;
-    send_to(&msgs, sock)?;
+    send_to(&msgs, sock, socket_addr_space)?;
     Ok(())
 }
 
@@ -138,7 +145,12 @@ pub fn recv_batch(recvr: &PacketReceiver, max_batch: usize) -> Result<(Vec<Packe
     Ok((batch, len, duration_as_ms(&recv_start.elapsed())))
 }
 
-pub fn responder(name: &'static str, sock: Arc<UdpSocket>, r: PacketReceiver) -> JoinHandle<()> {
+pub fn responder(
+    name: &'static str,
+    sock: Arc<UdpSocket>,
+    r: PacketReceiver,
+    socket_addr_space: SocketAddrSpace,
+) -> JoinHandle<()> {
     Builder::new()
         .name(format!("solana-responder-{}", name))
         .spawn(move || {
@@ -146,7 +158,7 @@ pub fn responder(name: &'static str, sock: Arc<UdpSocket>, r: PacketReceiver) ->
             let mut last_error = None;
             let mut last_print = 0;
             loop {
-                if let Err(e) = recv_send(&sock, &r) {
+                if let Err(e) = recv_send(&sock, &r, &socket_addr_space) {
                     match e {
                         StreamerError::RecvTimeout(RecvTimeoutError::Disconnected) => break,
                         StreamerError::RecvTimeout(RecvTimeoutError::Timeout) => (),
@@ -222,7 +234,12 @@ mod test {
         );
         let t_responder = {
             let (s_responder, r_responder) = channel();
-            let t_responder = responder("streamer_send_test", Arc::new(send), r_responder);
+            let t_responder = responder(
+                "streamer_send_test",
+                Arc::new(send),
+                r_responder,
+                SocketAddrSpace::Unspecified,
+            );
             let mut msgs = Packets::default();
             for i in 0..5 {
                 let mut b = Packet::default();

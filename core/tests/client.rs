@@ -18,6 +18,7 @@ use solana_sdk::{
     signature::{Keypair, Signer},
     system_transaction,
 };
+use solana_streamer::socket::SocketAddrSpace;
 use std::{
     net::{IpAddr, SocketAddr},
     sync::{
@@ -34,7 +35,8 @@ fn test_rpc_client() {
     solana_logger::setup();
 
     let alice = Keypair::new();
-    let test_validator = TestValidator::with_no_fees(alice.pubkey(), None);
+    let test_validator =
+        TestValidator::with_no_fees(alice.pubkey(), None, SocketAddrSpace::Unspecified);
 
     let bob_pubkey = solana_sdk::pubkey::new_rand();
 

@@ -4228,6 +4228,7 @@ dependencies = [
  "solana-net-utils",
  "solana-runtime",
  "solana-sdk",
+ "solana-streamer",
  "solana-transaction-status",
  "solana-version",
  "spl-token",
@@ -4340,6 +4341,7 @@ dependencies = [
  "solana-net-utils",
  "solana-runtime",
  "solana-sdk",
+ "solana-streamer",
  "solana-version",
 ]
 
@@ -4439,6 +4441,7 @@ dependencies = [
  "solana-net-utils",
  "solana-remote-wallet",
  "solana-sdk",
+ "solana-streamer",
  "solana-transaction-status",
  "solana-version",
  "solana-vote-program",
@@ -4658,6 +4661,7 @@ dependencies = [
  "solana-net-utils",
  "solana-runtime",
  "solana-sdk",
+ "solana-streamer",
  "solana-version",
 ]
 
@@ -5027,6 +5031,7 @@ dependencies = [
  "solana-runtime",
  "solana-sdk",
  "solana-stake-program",
+ "solana-streamer",
  "solana-vote-program",
  "tempfile",
 ]
@@ -5391,6 +5396,7 @@ dependencies = [
  "solana-sdk",
  "solana-stake-program",
  "solana-storage-bigtable",
+ "solana-streamer",
  "solana-transaction-status",
  "solana-version",
  "solana-vote-program",
@@ -5693,6 +5699,7 @@ dependencies = [
  "solana-remote-wallet",
  "solana-runtime",
  "solana-sdk",
+ "solana-streamer",
  "solana-transaction-status",
  "solana-version",
  "spl-associated-token-account",
@@ -5772,6 +5779,7 @@ dependencies = [
  "solana-rpc",
  "solana-runtime",
  "solana-sdk",
+ "solana-streamer",
  "solana-version",
  "solana-vote-program",
  "symlink",

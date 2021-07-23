@@ -7,6 +7,7 @@ use solana_gossip::gossip_service::{discover_cluster, get_client, get_multi_clie
 use solana_sdk::fee_calculator::FeeRateGovernor;
 use solana_sdk::signature::{Keypair, Signer};
 use solana_sdk::system_program;
+use solana_streamer::socket::SocketAddrSpace;
 use std::{collections::HashMap, fs::File, io::prelude::*, path::Path, process::exit, sync::Arc};
 
 /// Number of signatures for all transactions in ~1 week at ~100K TPS
@@ -68,13 +69,14 @@ fn main() {
     }
 
     info!("Connecting to the cluster");
-    let nodes = discover_cluster(entrypoint_addr, *num_nodes).unwrap_or_else(|err| {
-        eprintln!("Failed to discover {} nodes: {:?}", num_nodes, err);
-        exit(1);
-    });
+    let nodes = discover_cluster(entrypoint_addr, *num_nodes, SocketAddrSpace::Unspecified)
+        .unwrap_or_else(|err| {
+            eprintln!("Failed to discover {} nodes: {:?}", num_nodes, err);
+            exit(1);
+        });
 
     let client = if *multi_client {
-        let (client, num_clients) = get_multi_client(&nodes);
+        let (client, num_clients) = get_multi_client(&nodes, &SocketAddrSpace::Unspecified);
         if nodes.len() < num_clients {
             eprintln!(
                 "Error: Insufficient nodes discovered.  Expecting {} or more",
@@ -88,7 +90,7 @@ fn main() {
         let mut target_client = None;
         for node in nodes {
             if node.id == *target_node {
-                target_client = Some(Arc::new(get_client(&[node])));
+                target_client = Some(Arc::new(get_client(&[node], &SocketAddrSpace::Unspecified)));
                 break;
             }
         }
@@ -97,7 +99,7 @@ fn main() {
             exit(1);
         })
     } else {
-        Arc::new(get_client(&nodes))
+        Arc::new(get_client(&nodes, &SocketAddrSpace::Unspecified))
     };
 
     let keypairs = if *read_from_client_file {

@@ -493,7 +493,10 @@ mod tests {
     use {
         super::*,
         crate::rpc::create_validator_exit,
-        solana_gossip::crds_value::{CrdsData, CrdsValue, SnapshotHash},
+        solana_gossip::{
+            contact_info::ContactInfo,
+            crds_value::{CrdsData, CrdsValue, SnapshotHash},
+        },
         solana_ledger::{
             genesis_utils::{create_genesis_config, GenesisConfigInfo},
             get_tmp_ledger_path,
@@ -507,7 +510,9 @@ mod tests {
         solana_sdk::{
             genesis_config::{ClusterType, DEFAULT_GENESIS_ARCHIVE},
             signature::Signer,
+            signer::keypair::Keypair,
         },
+        solana_streamer::socket::SocketAddrSpace,
         std::{
             io::Write,
             net::{IpAddr, Ipv4Addr},
@@ -524,7 +529,11 @@ mod tests {
         let exit = Arc::new(AtomicBool::new(false));
         let validator_exit = create_validator_exit(&exit);
         let bank = Bank::new(&genesis_config);
-        let cluster_info = Arc::new(ClusterInfo::default());
+        let cluster_info = Arc::new(ClusterInfo::new(
+            ContactInfo::default(),
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        ));
         let ip_addr = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
         let rpc_addr = SocketAddr::new(
             ip_addr,
@@ -718,7 +727,11 @@ mod tests {
 
     #[test]
     fn test_health_check_with_trusted_validators() {
-        let cluster_info = Arc::new(ClusterInfo::default());
+        let cluster_info = Arc::new(ClusterInfo::new(
+            ContactInfo::default(),
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        ));
         let health_check_slot_distance = 123;
         let override_health_check = Arc::new(AtomicBool::new(false));
         let trusted_validators = vec![

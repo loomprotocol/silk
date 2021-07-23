@@ -7,7 +7,8 @@ use {
         contact_info::ContactInfo,
         deprecated::{shuffle_peers_and_index, sorted_retransmit_peers_and_stakes},
     },
-    solana_sdk::pubkey::Pubkey,
+    solana_sdk::{pubkey::Pubkey, signer::keypair::Keypair},
+    solana_streamer::socket::SocketAddrSpace,
     std::{
         collections::{HashMap, HashSet},
         sync::{
@@ -79,7 +80,11 @@ fn run_simulation(stakes: &[u64], fanout: usize) {
 
     // describe the leader
     let leader_info = ContactInfo::new_localhost(&solana_sdk::pubkey::new_rand(), 0);
-    let cluster_info = ClusterInfo::new_with_invalid_keypair(leader_info.clone());
+    let cluster_info = ClusterInfo::new(
+        leader_info.clone(),
+        Arc::new(Keypair::new()),
+        SocketAddrSpace::Unspecified,
+    );
 
     // setup staked nodes
     let mut staked_nodes = HashMap::new();

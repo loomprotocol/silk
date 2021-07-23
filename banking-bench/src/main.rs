@@ -25,6 +25,7 @@ use solana_sdk::{
     timing::{duration_as_us, timestamp},
     transaction::Transaction,
 };
+use solana_streamer::socket::SocketAddrSpace;
 use std::{
     sync::{atomic::Ordering, mpsc::Receiver, Arc, Mutex, RwLock},
     thread::sleep,
@@ -216,7 +217,11 @@ fn main() {
         );
         let (exit, poh_recorder, poh_service, signal_receiver) =
             create_test_recorder(&bank, &blockstore, None);
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(Node::new_localhost().info);
+        let cluster_info = ClusterInfo::new(
+            Node::new_localhost().info,
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
         let cluster_info = Arc::new(cluster_info);
         let banking_stage = BankingStage::new(
             &cluster_info,

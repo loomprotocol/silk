@@ -25,7 +25,7 @@ use solana_sdk::timing::timestamp;
 use solana_sdk::{clock::Slot, pubkey::Pubkey, signature::Keypair};
 use solana_streamer::{
     sendmmsg::{batch_send, SendPktsError},
-    socket::is_global,
+    socket::SocketAddrSpace,
 };
 use std::sync::atomic::AtomicU64;
 use std::{
@@ -404,6 +404,7 @@ pub fn broadcast_shreds(
     transmit_stats: &mut TransmitShredsStats,
     self_pubkey: Pubkey,
     bank_forks: &Arc<RwLock<BankForks>>,
+    socket_addr_space: &SocketAddrSpace,
 ) -> Result<()> {
     let mut result = Ok(());
     let broadcast_len = cluster_nodes.num_peers();
@@ -418,7 +419,7 @@ pub fn broadcast_shreds(
         .filter_map(|shred| {
             let seed = shred.seed(Some(self_pubkey), &root_bank);
             let node = cluster_nodes.get_broadcast_peer(seed)?;
-            if is_global(&node.tvu) {
+            if socket_addr_space.check(&node.tvu) {
                 Some((&shred.payload[..], &node.tvu))
             } else {
                 None
@@ -602,7 +603,11 @@ pub mod test {
         let broadcast_buddy = Node::new_localhost_with_pubkey(&buddy_keypair.pubkey());
 
         // Fill the cluster_info with the buddy's info
-        let cluster_info = ClusterInfo::new_with_invalid_keypair(leader_info.info.clone());
+        let cluster_info = ClusterInfo::new(
+            leader_info.info.clone(),
+            Arc::new(Keypair::new()),
+            SocketAddrSpace::Unspecified,
+        );
         cluster_info.insert_info(broadcast_buddy.info);
         let cluster_info = Arc::new(cluster_info);
 
